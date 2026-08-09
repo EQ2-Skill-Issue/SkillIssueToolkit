@@ -67,11 +67,11 @@ namespace SkillIssueToolkit.ActPlugin
             Log("InitPlugin starting");
 
             _settings = PluginSettings.Load(pluginDir);
+            _triggerSettings = TriggerSettings.Load(pluginDir);
             BuildSettingsUi(pluginScreenSpace, pluginDir);
 
             StartServer(_settings.Port);
             LaunchOverlayHostIfNotRunning(pluginDir);
-            _triggerSettings = TriggerSettings.Load(pluginDir);
             _ = StartTriggerEngineAsync(pluginDir);
             _ = CheckForUpdateAsync();
 
