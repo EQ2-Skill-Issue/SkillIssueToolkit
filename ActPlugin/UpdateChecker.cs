@@ -79,14 +79,14 @@ namespace SkillIssueToolkit.ActPlugin
                 }
 
                 var latestVersionText = release.TagName.TrimStart('v', 'V');
-                if (!Version.TryParse(latestVersionText, out var latestVersion))
+                if (!TryParseCoreVersion(latestVersionText, out var latestVersion))
                 {
                     log?.Invoke("UpdateChecker: could not parse release tag '" + release.TagName + "' as a version - skipping");
                     return null;
                 }
 
                 var currentVersionText = GetCurrentVersion();
-                if (!Version.TryParse(currentVersionText, out var currentVersion))
+                if (!TryParseCoreVersion(currentVersionText, out var currentVersion))
                 {
                     log?.Invoke("UpdateChecker: could not parse current version '" + currentVersionText + "' - skipping");
                     return null;
@@ -106,6 +106,18 @@ namespace SkillIssueToolkit.ActPlugin
                 log?.Invoke("UpdateChecker: update check failed - " + ex.Message);
                 return null;
             }
+        }
+
+        // System.Version has no concept of SemVer pre-release suffixes (e.g. "-beta.1"), so
+        // strip everything from the first '-' onward before parsing. Fine for comparison
+        // purposes here since pre-release/draft releases are already filtered out above -
+        // this only ever needs to compare stable X.Y.Z tags against the current version's
+        // core X.Y.Z, even while the current build is itself still a beta.
+        private static bool TryParseCoreVersion(string versionText, out Version version)
+        {
+            var dashIndex = versionText.IndexOf('-');
+            var coreVersionText = dashIndex >= 0 ? versionText.Substring(0, dashIndex) : versionText;
+            return Version.TryParse(coreVersionText, out version);
         }
     }
 }
