@@ -1,0 +1,77 @@
+[
+  {
+    "Name": "YouDied",
+    "Pattern": "^You have been slain by (?<who>.+)\\.$",
+    "DisplayText": "Killed by {who}!",
+    "Severity": "Alarm"
+  },
+  {
+    "Name": "GroupMemberDown",
+    "Pattern": "has been defeated",
+    "DisplayText": "Someone in your group went down!",
+    "Severity": "Alert"
+  },
+  {
+    "Name": "FeignDeathReminder",
+    "Pattern": "You feel much better\\.",
+    "DisplayText": "Feign Death recovered",
+    "Severity": "Info"
+  },
+  {
+    "Name": "ExampleZoneScoped",
+    "Pattern": "You feel much better\\.",
+    "DisplayText": "Feign Death recovered (this copy of the rule only evaluates while you're in Loping Plains)",
+    "Severity": "Info",
+    "Zone": "Loping Plains"
+  },
+  {
+    "Name": "ExampleSuppressCooldown",
+    "Pattern": "has been defeated",
+    "DisplayText": "Group member down (won't repeat for 30s even if this matches again in that window)",
+    "Severity": "Alert",
+    "SuppressSeconds": 30
+  },
+  {
+    "Name": "ExampleDelayedAlert",
+    "Pattern": "^You have been slain by (?<who>.+)\\.$",
+    "DisplayText": "Delayed example - killed by {who} (shown 3s after the actual log line, not instantly)",
+    "Severity": "Alarm",
+    "DelaySeconds": 3
+  },
+  {
+    "Name": "ExampleRequirePlayerMatch",
+    "Pattern": "(?<who>\\w+) is afflicted with a curse\\.",
+    "DisplayText": "You are cursed!",
+    "Severity": "Alarm",
+    "RequirePlayerMatch": "who"
+  },
+  {
+    "Name": "ExamplePureTimer",
+    "Pattern": "You feel much better\\.",
+    "TimerDurationSeconds": 60,
+    "TimerLabel": "Feign Death Recast"
+  },
+  {
+    "Name": "ExampleAlertPlusTimer",
+    "Pattern": "^You have been slain by (?<who>.+)\\.$",
+    "DisplayText": "Killed by {who}! (also starting a 15s example timer)",
+    "Severity": "Alarm",
+    "TimerDurationSeconds": 15,
+    "TimerLabel": "Example Recast",
+    "TimerColor": "#ff4136"
+  },
+  {
+    "Name": "ExampleOverdueTimer",
+    "Pattern": "Gabriel has been defeated\\.",
+    "TimerDurationSeconds": 8,
+    "TimerLabel": "Overdue Example",
+    "TimerOverdueLingerSeconds": 10
+  },
+  {
+    "Name": "ExampleInfiniteOverdueTimer",
+    "Pattern": "You feel much better\\.",
+    "TimerDurationSeconds": 6,
+    "TimerLabel": "Never Falls Off Until It Happens Again",
+    "TimerOverdueLingerSeconds": -1
+  }
+]

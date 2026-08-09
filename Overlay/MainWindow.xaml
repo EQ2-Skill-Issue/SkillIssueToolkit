@@ -1,0 +1,42 @@
+<Window x:Class="SkillIssueToolkit.Overlay.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="EQ2 Overlay"
+        WindowStyle="None"
+        AllowsTransparency="True"
+        Background="#01000000"
+        Topmost="True"
+        ShowInTaskbar="False"
+        ResizeMode="NoResize"
+        Width="566" Height="70"
+        Left="40" Top="40"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition x:Name="GripRow" Height="0" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <!-- Lives in its own reserved row, never overlapping WebView2's row at all - the
+             "airspace" limitation (WebView2 is a native HWND; nothing renders reliably on
+             top of it) means this has to be a genuinely separate area, not something layered
+             over the content. Background="Transparent" makes it fully invisible while
+             staying clickable - WPF hit-testing only requires a non-null brush, not a
+             visually opaque one, so this needs no fade animation or polling at all to be
+             "invisible but functional". Cursor="SizeAll" still shows the move cursor on
+             hover even though nothing is visibly rendered, which is a nice way to feel out
+             where the strip is without seeing it. Row height comes from
+             MainWindow.xaml.cs's ApplyAllowDragging/ApplyDragHandleHeight (configurable, not
+             hardcoded). -->
+        <Border x:Name="DragHandle"
+                Grid.Row="0"
+                Background="Transparent"
+                Cursor="SizeAll"
+                MouseLeftButtonDown="DragHandle_MouseLeftButtonDown" />
+
+        <wv2:WebView2 x:Name="webView" Grid.Row="1" />
+    </Grid>
+</Window>

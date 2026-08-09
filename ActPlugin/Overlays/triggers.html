@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EQ2 Trigger Alerts</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Roboto+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="common.css" rel="stylesheet">
+    <style>
+           /* No bordered panel - severity color-coding needs to work at a glance, and a backing
+        panel would work against that. Alert/Info use the same palette as the rest of this
+        project (--brass/--verdigris); Alarm uses a vivid red rather than --rust, which reads
+        too orange/muted next to --brass for a clear danger signal. Alarm/Alert use Cinzel - a
+        display face built for large uppercase reads better in that role than a condensed
+        sans-serif; Info stays in Roboto Condensed since it's smaller, normal-case text meant to
+        be read quickly rather than glanced at dramatically. */
+           #panel {
+               width: 460px;
+               padding: 14px 10px;
+               display: flex;
+               flex-direction: column;
+               align-items: center;
+               gap: 4px;
+               text-align: center;
+               background: transparent;
+           }
+
+           .alert-line {
+               font-family: "Roboto Condensed", "Segoe UI", sans-serif;
+               font-weight: 700;
+               text-shadow: 0 2px 4px rgba(0,0,0,0.9), 0 0 12px rgba(0,0,0,0.6);
+               line-height: 1.15;
+               animation: popIn 0.12s ease-out;
+           }
+
+               .alert-line.alarm {
+                   font-family: "Cinzel", Georgia, serif;
+                   font-size: 30px;
+                   text-transform: uppercase;
+                   letter-spacing: 0.01em;
+                   color: #ff4136;
+               }
+
+               .alert-line.alert {
+                   font-family: "Cinzel", Georgia, serif;
+                   font-size: 22px;
+                   text-transform: uppercase;
+                   letter-spacing: 0.005em;
+                   color: var(--brass);
+               }
+
+               .alert-line.info {
+                   font-size: 18px;
+                   font-weight: 600;
+                   color: var(--verdigris);
+               }
+
+           @keyframes popIn {
+               from {
+                   opacity: 0;
+                   transform: scale(0.9);
+               }
+
+               to {
+                   opacity: 1;
+                   transform: scale(1);
+               }
+           }
+    </style>
+</head>
+<body>
+    <div id="panel">
+        <div id="alarmLines"></div>
+        <div id="alertLines"></div>
+        <div id="infoLines"></div>
+    </div>
+
+    <script src="common.js"></script>
+    <script>
+        const containers = {
+            Alarm: document.getElementById('alarmLines'),
+            Alert: document.getElementById('alertLines'),
+            Info: document.getElementById('infoLines'),
+        };
+        const cssClassFor = { Alarm: 'alarm', Alert: 'alert', Info: 'info' };
+        const MAX_LINES_PER_TIER = 3;
+        const LINE_LIFETIME_MS = 6000;
+
+        function addLine(fired) {
+            // Case-insensitive on purpose, as a backstop independent of what the server sends -
+            // normalizes any casing (the server already sends exactly "Alarm"/"Alert"/"Info", but
+            // this stays defensive rather than relying on that alone).
+            const raw = (fired.severity || '').trim();
+            const canonical = raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
+            const severity = containers[canonical] ? canonical : 'Alert';
+            const container = containers[severity];
+
+            const el = document.createElement('div');
+            el.className = 'alert-line ' + cssClassFor[severity];
+            el.textContent = fired.displayText;
+            container.appendChild(el);
+
+            // Oldest at top, newest at bottom within each tier.
+            while (container.children.length > MAX_LINES_PER_TIER) {
+                container.removeChild(container.firstElementChild);
+            }
+
+            setTimeout(() => {
+                if (el.parentElement) el.remove();
+            }, LINE_LIFETIME_MS);
+        }
+
+        watchContentSize();
+        connectOverlay({ triggerFired: addLine });
+
+        // Preview mode: shows static placeholder text so the overlay is visible enough to grab
+        // and position even when nothing has fired - the panel is otherwise invisible whenever
+        // it's empty (see common.js's watchContentSize), correct once positioned but awkward for
+        // initial setup. Called live by the WPF host via ExecuteScriptAsync (same mechanism as
+        // window.setOverlayZoom), driven by a settings-tab checkbox - ?demo=1 also still works as
+        // a one-time URL param for the separate screenshot use case.
+        const previewEls = [];
+
+        window.setPreviewMode = function (enabled) {
+            previewEls.forEach((el) => el.remove());
+            previewEls.length = 0;
+
+            if (!enabled) return;
+
+            const demo = [
+                ['Alarm', 'ALARM TEXT'], ['Alarm', 'ALARM TEXT 2'],
+                ['Alert', 'ALERT TEXT'], ['Alert', 'ALERT TEXT 2'],
+                ['Info', 'Info text'], ['Info', 'Info text 2'],
+            ];
+            demo.forEach(([severity, text]) => {
+                const el = document.createElement('div');
+                el.className = 'alert-line ' + cssClassFor[severity];
+                el.textContent = text;
+                containers[severity].appendChild(el);
+                previewEls.push(el);
+            });
+        };
+
+        if (new URLSearchParams(window.location.search).has('demo')) {
+            window.setPreviewMode(true);
+        }
+    </script>
+</body>
+</html>

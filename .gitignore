@@ -427,3 +427,10 @@ FodyWeavers.xsd
 *.msix
 *.msm
 *.msp
+
+# publish.ps1 output - assembled distributable, includes WebView2's own runtime
+# profile/cache data which shouldn't be versioned
+/dist/
+
+# Runtime debug log written next to the plugin DLL
+eq2overlay-debug.log

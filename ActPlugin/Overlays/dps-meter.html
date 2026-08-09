@@ -1,0 +1,514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EQ2 DPS Overlay</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Roboto+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="common.css" rel="stylesheet">
+    <style>
+         :root {
+             /* Standard column sizes - the single source of truth for panel width. EQ2's max name
+        length isn't documented beyond a 4-char minimum; 18 chars (EQ1's known convention) is
+        used as a working assumption, with text-overflow:ellipsis as the safety net if a real
+        name exceeds it. Numeric width is sized for "999.9K" plus a short header abbreviation -
+        both are estimates from typical font metrics, not measured against real rendering. */
+             --name-col-width: 130px;
+             --num-col-width: 46px;
+             --num-col-count: 9;
+         }
+
+         #panel {
+             /* border-box: this is the outer width, so padding (20px L/R) and border (2px L/R) are
+        added on top of the content width the columns need, not subtracted from it. */
+             width: calc(var(--name-col-width) + var(--num-col-count) * var(--num-col-width) + 22px);
+             background: linear-gradient(180deg, rgba(26,20,15,0.92), rgba(20,15,11,0.92));
+             border: 1px solid var(--brass);
+             border-radius: 6px;
+             box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.5);
+             padding: 8px 10px 10px;
+         }
+
+         #header {
+             display: flex;
+             justify-content: space-between;
+             align-items: baseline;
+             padding-bottom: 8px;
+             margin-bottom: 6px;
+             border-bottom: 2px solid var(--shadow);
+             position: relative;
+         }
+
+             #header::after {
+                 content: "";
+                 position: absolute;
+                 left: 0;
+                 right: 0;
+                 bottom: -3px;
+                 height: 1px;
+                 background: var(--brass);
+                 opacity: 0.55;
+             }
+
+         .header-left {
+             display: flex;
+             align-items: baseline;
+             gap: 8px;
+             min-width: 0;
+             overflow: hidden;
+         }
+
+         #modeToggle {
+             flex: 0 0 auto;
+             font-family: "Roboto Condensed", sans-serif;
+             font-weight: 700;
+             font-size: 9px;
+             text-transform: uppercase;
+             letter-spacing: 0.03em;
+             color: var(--ink);
+             background: var(--brass);
+             border-radius: 3px;
+             padding: 2px 6px;
+             cursor: pointer;
+             user-select: none;
+         }
+
+             #modeToggle:hover {
+                 background: #ddb15a;
+             }
+
+         #encounterName {
+             font-family: "Cinzel", Georgia, serif;
+             font-weight: 700;
+             font-size: 13px;
+             letter-spacing: 0.02em;
+             overflow: hidden;
+             text-overflow: ellipsis;
+             white-space: nowrap;
+         }
+
+         #totalDps {
+             font-variant-numeric: tabular-nums;
+             font-weight: 700;
+             font-size: 13px;
+             color: var(--brass);
+             flex: 0 0 auto;
+         }
+
+         table {
+             width: 100%;
+             table-layout: fixed;
+             border-collapse: collapse;
+         }
+
+         col.col-name {
+             width: var(--name-col-width);
+         }
+
+         col.col-num {
+             width: var(--num-col-width);
+         }
+
+         col.col-taken {
+             width: var(--num-col-width);
+         }
+
+         thead th {
+             font-weight: 700;
+             font-size: 9px;
+             letter-spacing: 0.01em;
+             text-transform: uppercase;
+             color: var(--parchment-dim);
+             text-align: right;
+             padding: 0 3px 4px;
+             border-bottom: 1px solid var(--shadow);
+             cursor: pointer;
+             user-select: none;
+             white-space: nowrap;
+             overflow: hidden;
+             text-overflow: ellipsis;
+             position: sticky;
+             top: 0;
+             background: rgba(20,15,11,0.97);
+         }
+
+             thead th:hover {
+                 color: var(--brass);
+             }
+
+             thead th.sorted {
+                 color: var(--brass);
+             }
+
+             thead th .sort-arrow {
+                 font-size: 8px;
+                 margin-left: 2px;
+             }
+
+             thead th.col-name {
+                 text-align: left;
+             }
+
+         tbody td {
+             font-size: 11px;
+             text-align: right;
+             padding: 4px 3px;
+             white-space: nowrap;
+             overflow: hidden;
+             font-variant-numeric: tabular-nums;
+             color: var(--brass);
+         }
+
+         tbody tr.you {
+             background: rgba(201,154,60,0.10);
+         }
+
+             tbody tr.you td {
+                 color: #e8c877;
+             }
+
+         tbody tr + tr td {
+             border-top: 1px solid rgba(58,47,34,0.5);
+         }
+
+         .col-name {
+             text-align: left !important;
+             color: var(--parchment) !important;
+         }
+
+         tbody tr.you .col-name {
+             color: var(--parchment) !important;
+         }
+
+         .table-scroll {
+             max-height: 260px;
+             overflow-y: auto;
+             overflow-x: hidden;
+         }
+
+             .table-scroll::-webkit-scrollbar {
+                 width: 6px;
+             }
+
+             .table-scroll::-webkit-scrollbar-track {
+                 background: rgba(0,0,0,0.2);
+             }
+
+             .table-scroll::-webkit-scrollbar-thumb {
+                 background: var(--shadow);
+                 border-radius: 3px;
+             }
+
+                 .table-scroll::-webkit-scrollbar-thumb:hover {
+                     background: var(--brass);
+                 }
+
+             .table-scroll::-webkit-scrollbar-corner {
+                 background: rgba(20,15,11,0.97);
+             }
+
+         .name-cell {
+             display: flex;
+             align-items: center;
+             gap: 6px;
+         }
+
+         .class-icon {
+             flex: 0 0 auto;
+             width: 16px;
+             height: 16px;
+             border-radius: 3px;
+             border: 1px solid var(--shadow);
+             background: rgba(0,0,0,0.3);
+             display: flex;
+             align-items: center;
+             justify-content: center;
+             font-size: 10px;
+             line-height: 1;
+         }
+
+             .class-icon svg {
+                 width: 10px;
+                 height: 10px;
+                 fill: var(--parchment-dim);
+             }
+
+             .class-icon img {
+                 width: 100%;
+                 height: 100%;
+                 object-fit: contain;
+                 border-radius: 2px;
+             }
+
+         .name-text {
+             flex: 1 1 auto;
+             min-width: 0;
+             overflow: hidden;
+             text-overflow: ellipsis;
+             white-space: nowrap;
+             font-size: 12px;
+             font-weight: 600;
+         }
+    </style>
+</head>
+<body>
+    <div id="panel">
+        <div id="header">
+            <div class="header-left">
+                <span id="modeToggle" data-tooltip="Click to switch between current-encounter and zonewide totals">Encounter</span>
+                <span id="encounterName">Waiting for combat…</span>
+            </div>
+            <span id="totalDps"></span>
+        </div>
+        <div class="table-scroll">
+            <table>
+                <colgroup>
+                    <col class="col-name">
+                    <col class="col-num">
+                    <col class="col-num">
+                    <col class="col-num">
+                    <col class="col-num">
+                    <col class="col-num">
+                    <col class="col-num">
+                    <col class="col-num">
+                    <col class="col-num">
+                    <col class="col-taken">
+                </colgroup>
+                <thead>
+                    <tr>
+                        <th class="col-name" data-sort-key="name" data-tooltip="Name">Name</th>
+                        <th data-sort-key="damagePercent" data-tooltip="Percent of total group damage">Dmg%</th>
+                        <th data-sort-key="encDps" data-tooltip="Damage per second (encounter average)">DPS</th>
+                        <th data-sort-key="hps" data-tooltip="Healing per second (encounter average)">HPS</th>
+                        <th data-sort-key="cures" data-tooltip="Cures / dispels performed">Cure</th>
+                        <th data-sort-key="powerFed" data-tooltip="Power given to others">Fed</th>
+                        <th data-sort-key="powerDrain" data-tooltip="Power drained from enemies">Drain</th>
+                        <th data-sort-key="maxHit" data-tooltip="Largest single hit">Max</th>
+                        <th data-sort-key="damageTaken" data-tooltip="Total damage taken">Taken</th>
+                        <th data-sort-key="deaths" data-tooltip="Deaths this encounter">Death</th>
+                    </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+            </table>
+        </div>
+    </div>
+    <div id="customTooltip"></div>
+
+    <script src="common.js"></script>
+    <script>
+        const rowsEl = document.getElementById('rows');
+        const encounterNameEl = document.getElementById('encounterName');
+        const totalDpsEl = document.getElementById('totalDps');
+        const modeToggleEl = document.getElementById('modeToggle');
+        const rowElements = new Map(); // name -> <tr>, reused so rows update in place instead of flickering
+        let latestCombatants = [];
+        let sortKey = 'damagePercent';
+        let sortDir = 'desc'; // matches the server's default Damage-descending order
+
+        // Both snapshot types arrive continuously regardless of which one is currently displayed
+        // (the plugin always broadcasts both) - the toggle just switches which cached one gets
+        // rendered, so switching is instant with no server round-trip.
+        let viewMode = 'encounter'; // 'encounter' | 'zone'
+        let latestEncounterSnapshot = null;
+        let latestZoneSnapshot = null;
+
+        modeToggleEl.addEventListener('click', () => {
+            viewMode = viewMode === 'encounter' ? 'zone' : 'encounter';
+            modeToggleEl.textContent = viewMode === 'encounter' ? 'Encounter' : 'Zone';
+            const current = viewMode === 'encounter' ? latestEncounterSnapshot : latestZoneSnapshot;
+            if (current) render(current);
+        });
+
+        function fmt(n) {
+            n = Number(n) || 0;
+            if (Math.abs(n) >= 1e12) return (n / 1e12).toFixed(1) + 'T';
+            if (Math.abs(n) >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+            if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+            if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+            return Math.round(n).toString();
+        }
+
+        // maxHit arrives already formatted by ACT (e.g. "5.62K") for display - this reverses that
+        // just enough to sort correctly, so "5.62K" ranks above "700" instead of a plain string
+        // comparison putting "5.62K" before "700" alphabetically.
+        function parseAbbreviated(str) {
+            if (!str || str === '-') return 0;
+            const match = /^([\d.]+)\s*([KMBT]?)/i.exec(str.trim());
+            if (!match) return 0;
+            const mult = { K: 1e3, M: 1e6, B: 1e9, T: 1e12 }[match[2].toUpperCase()] || 1;
+            return parseFloat(match[1]) * mult;
+        }
+
+        function sortValue(c, key) {
+            if (key === 'name') return c.name.toLowerCase();
+            if (key === 'maxHit') return parseAbbreviated(c.maxHit);
+            return Number(c[key]) || 0;
+        }
+
+        // Class -> archetype -> icon, since the overlay only ever sees a class name (auto-resolved
+        // via Census), never a real archetype. Covers the 24 core EQ2 classes; Beastlord/Channeler
+        // are newer paid-only additions folded into Fighter/Priest respectively. Falls back to a
+        // generic emblem for anything unrecognized (typos, or a class not yet added here) rather
+        // than showing nothing.
+        const CLASS_ARCHETYPE = {
+            // Fighter
+            berserker: 'fighter', guardian: 'fighter', paladin: 'fighter', shadowknight: 'fighter',
+            monk: 'fighter', bruiser: 'fighter', beastlord: 'fighter',
+            // Priest
+            fury: 'priest', warden: 'priest', templar: 'priest', inquisitor: 'priest',
+            mystic: 'priest', defiler: 'priest', channeler: 'priest',
+            // Mage
+            wizard: 'mage', warlock: 'mage', conjuror: 'mage', necromancer: 'mage',
+            illusionist: 'mage', coercer: 'mage',
+            // Scout
+            troubador: 'scout', dirge: 'scout', ranger: 'scout', assassin: 'scout',
+            swashbuckler: 'scout', brigand: 'scout',
+        };
+
+        const ARCHETYPE_ICON = { fighter: '\u2694\uFE0F', priest: '\u271A', mage: '\u2728', scout: '\uD83D\uDDE1\uFE0F' };
+        const GENERIC_ICON = `<svg viewBox="0 0 24 24"><path d="M12 2 L14 9 L21 9 L15.5 13.5 L17.5 21 L12 16.5 L6.5 21 L8.5 13.5 L3 9 L10 9 Z"/></svg>`;
+
+        // Sets both the icon and its hover tooltip. Tries a real image file first
+        // (icons/<class>.webp, e.g. icons/paladin.webp) and falls back to the archetype emoji (or
+        // the generic emblem if the class is unrecognized/missing) if that file doesn't exist yet -
+        // so adding real icons is just dropping files in, no code changes needed, and nothing
+        // breaks for classes you haven't added an icon for.
+        function setClassIcon(iconEl, className) {
+            const slug = className ? className.trim().toLowerCase() : '';
+            const archetype = CLASS_ARCHETYPE[slug];
+            const fallbackHtml = archetype ? ARCHETYPE_ICON[archetype] : GENERIC_ICON;
+
+            iconEl.dataset.tooltip = className || 'Unknown class';
+
+            if (slug) {
+                const img = document.createElement('img');
+                img.src = `icons/${slug}.webp`;
+                img.alt = className;
+                img.onerror = () => { iconEl.innerHTML = fallbackHtml; };
+                iconEl.innerHTML = '';
+                iconEl.appendChild(img);
+            } else {
+                iconEl.innerHTML = fallbackHtml;
+            }
+        }
+
+        function buildRow(name) {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+          <td class="col-name">
+            <div class="name-cell">
+              <span class="class-icon"></span>
+              <span class="name-text"></span>
+            </div>
+          </td>
+          <td class="cell-dmgpct"></td>
+          <td class="cell-dps"></td>
+          <td class="cell-hps"></td>
+          <td class="cell-cures"></td>
+          <td class="cell-powerfed"></td>
+          <td class="cell-powerdrain"></td>
+          <td class="cell-maxhit"></td>
+          <td class="cell-taken"></td>
+          <td class="cell-deaths"></td>`;
+            rowsEl.appendChild(tr);
+            return tr;
+        }
+
+        function render(snapshot) {
+            encounterNameEl.textContent = `${snapshot.encounterName || 'Encounter'} · ${snapshot.duration || ''}`;
+            totalDpsEl.textContent = `${fmt(snapshot.totalDps)} DPS`;
+            latestCombatants = snapshot.combatants || [];
+            renderRows();
+        }
+
+        function renderRows() {
+            const sorted = [...latestCombatants].sort((a, b) => {
+                const av = sortValue(a, sortKey);
+                const bv = sortValue(b, sortKey);
+                if (av < bv) return sortDir === 'asc' ? -1 : 1;
+                if (av > bv) return sortDir === 'asc' ? 1 : -1;
+                return 0;
+            });
+
+            const seen = new Set();
+
+            sorted.forEach((c, index) => {
+                seen.add(c.name);
+                let row = rowElements.get(c.name);
+                if (!row) {
+                    row = buildRow(c.name);
+                    rowElements.set(c.name, row);
+                }
+
+                row.className = c.isYou ? 'you' : '';
+                setClassIcon(row.querySelector('.class-icon'), c.class);
+                row.querySelector('.name-text').textContent = c.name;
+                row.querySelector('.cell-dmgpct').textContent = `${c.damagePercent.toFixed(0)}%`;
+                row.querySelector('.cell-dps').textContent = fmt(c.encDps);
+                row.querySelector('.cell-hps').textContent = c.healing > 0 ? fmt(c.hps) : '-';
+                row.querySelector('.cell-cures').textContent = c.cures;
+                row.querySelector('.cell-powerfed').textContent = c.powerFed > 0 ? fmt(c.powerFed) : '-';
+                row.querySelector('.cell-powerdrain').textContent = c.powerDrain > 0 ? fmt(c.powerDrain) : '-';
+                row.querySelector('.cell-maxhit').textContent = c.maxHit || '-';
+                row.querySelector('.cell-taken').textContent = fmt(c.damageTaken);
+                row.querySelector('.cell-deaths').textContent = c.deaths;
+
+                // Row order follows the active sort. Only touch the DOM if this row isn't already in
+                // the right slot - appendChild (even re-appending the same node) removes and
+                // re-inserts it, which resets any CSS animation on it. Nothing here uses one, but this
+                // avoids the same issue timers.html hit once it did.
+                if (rowsEl.children[index] !== row) {
+                    rowsEl.insertBefore(row, rowsEl.children[index] || null);
+                }
+            });
+
+            for (const [name, row] of rowElements) {
+                if (!seen.has(name)) {
+                    row.remove();
+                    rowElements.delete(name);
+                }
+            }
+        }
+
+        document.querySelectorAll('th[data-sort-key]').forEach((th) => {
+            th.addEventListener('click', () => {
+                const key = th.dataset.sortKey;
+                if (sortKey === key) {
+                    sortDir = sortDir === 'desc' ? 'asc' : 'desc';
+                } else {
+                    sortKey = key;
+                    sortDir = 'desc';
+                }
+
+                document.querySelectorAll('th[data-sort-key]').forEach((h) => {
+                    h.classList.remove('sorted');
+                    const arrow = h.querySelector('.sort-arrow');
+                    if (arrow) arrow.remove();
+                });
+                th.classList.add('sorted');
+                th.insertAdjacentHTML('beforeend', `<span class="sort-arrow">${sortDir === 'desc' ? '▼' : '▲'}</span>`);
+
+                renderRows();
+            });
+        });
+
+        const defaultSortTh = document.querySelector(`th[data-sort-key="${sortKey}"]`);
+        defaultSortTh.classList.add('sorted');
+        defaultSortTh.insertAdjacentHTML('beforeend', `<span class="sort-arrow">▼</span>`);
+
+        initTooltips();
+        watchContentSize();
+        connectOverlay({
+            encounterSnapshot: (data) => {
+                latestEncounterSnapshot = data;
+                if (viewMode === 'encounter') render(data);
+            },
+            zoneSnapshot: (data) => {
+                latestZoneSnapshot = data;
+                if (viewMode === 'zone') render(data);
+            }
+        });
+    </script>
+</body>
+</html>

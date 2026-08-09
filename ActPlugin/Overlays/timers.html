@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EQ2 Timers</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Roboto+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="common.css" rel="stylesheet">
+    <style>
+           /* Matches dps-meter.html's ledger treatment - border/gradient/shadow on the panel,
+        Cinzel for labels, brass accents. Bars themselves keep a Cactbot-style minimal chrome
+        (solid colored bars, no per-bar border/gradient), just using this project's own color
+        language instead of a generic flat blue. */
+           #panel {
+               width: 320px;
+               display: flex;
+               flex-direction: column;
+               gap: 4px;
+               padding: 10px;
+               background: linear-gradient(180deg, rgba(26,20,15,0.92), rgba(20,15,11,0.92));
+               border: 1px solid var(--brass);
+               border-radius: 6px;
+               box-shadow: inset 0 0 0 1px rgba(0,0,0,0.4), 0 4px 16px rgba(0,0,0,0.5);
+           }
+
+           .bar {
+               position: relative;
+               height: 24px;
+               border-radius: 4px;
+               background: rgba(0, 0, 0, 0.45);
+               border: 1px solid var(--shadow);
+               overflow: hidden;
+           }
+
+           .bar-fill {
+               position: absolute;
+               top: 0;
+               left: 0;
+               bottom: 0;
+               transition: width 0.1s linear;
+           }
+
+           .bar-label, .bar-time {
+               position: absolute;
+               top: 0;
+               bottom: 0;
+               display: flex;
+               align-items: center;
+               font-weight: 700;
+               color: var(--parchment);
+               text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+               white-space: nowrap;
+               z-index: 1;
+           }
+
+           .bar-label {
+               left: 8px;
+               right: 42px;
+               overflow: hidden;
+               text-overflow: ellipsis;
+               font-family: "Cinzel", Georgia, serif;
+               font-size: 12px;
+               letter-spacing: 0.01em;
+           }
+
+           .bar-time {
+               right: 8px;
+               font-family: "Roboto Condensed", "Segoe UI", sans-serif;
+               font-size: 13px;
+               font-variant-numeric: tabular-nums;
+           }
+           /* Matches Cactbot's BarExpiresSoonSeconds - a bar about to run out gets a pulsing
+        highlight so it's noticeable even out of the corner of your eye. */
+           .bar.expiring-soon {
+               animation: pulseSoon 0.6s ease-in-out infinite;
+           }
+
+           @keyframes pulseSoon {
+               0%, 100% {
+                   box-shadow: 0 0 0 rgba(201,154,60,0);
+               }
+
+               50% {
+                   box-shadow: 0 0 8px 3px rgba(201,154,60,0.7);
+               }
+           }
+           /* Deliberately faster and stronger than expiring-soon's brass glow - an overdue timer is
+        more urgent than "about to expire", not the same level of attention. */
+           .bar.overdue {
+               animation: pulseOverdue 1.5s ease-in-out infinite;
+           }
+
+           @keyframes pulseOverdue {
+               0%, 100% {
+                   box-shadow: 0 0 0 rgba(255,65,54,0);
+               }
+
+               50% {
+                   box-shadow: 0 0 10px 4px rgba(255,65,54,0.85);
+               }
+           }
+    </style>
+</head>
+<body>
+    <div id="panel"></div>
+
+    <script src="common.js"></script>
+    <script>
+        const panelEl = document.getElementById('panel');
+        const DEFAULT_COLOR = '#6b8a7a'; // matches common.css's --verdigris exactly
+        const EXPIRES_SOON_SECONDS = 5; // matches Cactbot's own BarExpiresSoonSeconds concept
+
+        // Keyed by InstanceId - each concurrent occurrence of a rule (e.g. the same debuff cast on
+        // two different players) is tracked independently, even though same-named instances get
+        // visually collapsed into one bar at render time (see renderBars below).
+        const activeInstances = new Map();
+
+        // Keyed by ruleName - reused across renders so the DOM doesn't get rebuilt from scratch
+        // every tick, same pattern as dps-meter.html's rowElements.
+        const barElements = new Map();
+
+        function onTimerStarted(fired) {
+            // A fresh occurrence of this rule means the wait is over - clear out any existing
+            // instance of the SAME ruleName that's already sitting in an overdue state. This matters
+            // most for infinite-linger timers (TimerOverdueLingerSeconds: -1), which would otherwise
+            // never get cleared at all once superseded - a fresh instance doesn't automatically
+            // remove an old one that's set to never expire on its own. Instances still normally
+            // counting down (not yet overdue) are left alone - concurrent, not-yet-overdue instances
+            // of the same rule are a legitimate case (e.g. cast on two different players) and still
+            // collapse into the "xN" display as before.
+            const now = Date.now();
+            for (const [id, inst] of activeInstances) {
+                if (inst.ruleName === fired.ruleName && now >= inst.expiresAt) {
+                    activeInstances.delete(id);
+                }
+            }
+
+            activeInstances.set(fired.instanceId, {
+                ruleName: fired.ruleName,
+                label: fired.label || fired.ruleName,
+                color: fired.color || DEFAULT_COLOR,
+                durationSeconds: fired.durationSeconds,
+                overdueLingerSeconds: fired.overdueLingerSeconds || 0,
+                expiresAt: now + fired.durationSeconds * 1000,
+            });
+        }
+
+        let previewMode = false;
+
+        // Called live by the WPF host via ExecuteScriptAsync (same mechanism as
+        // window.setOverlayZoom), driven by a settings-tab checkbox. Without this, positioning the
+        // overlay means either waiting for a real timer or knowing to use test.html - most people
+        // wouldn't think to do either.
+        window.setPreviewMode = function (enabled) {
+            previewMode = enabled;
+            renderBars();
+        };
+
+        function renderBars() {
+            const now = Date.now();
+
+            for (const [id, inst] of activeInstances) {
+                if (inst.overdueLingerSeconds < 0) continue; // -1 = linger indefinitely, only cleared by a fresh occurrence (see onTimerStarted)
+                if (now >= inst.expiresAt + inst.overdueLingerSeconds * 1000) activeInstances.delete(id);
+            }
+
+            // Group remaining instances by ruleName - multiple concurrent instances of the same
+            // rule (e.g. cast on several different players) collapse into one bar showing the
+            // soonest-to-expire time and a count, rather than one row per instance.
+            const groups = new Map();
+            for (const inst of activeInstances.values()) {
+                if (!groups.has(inst.ruleName)) groups.set(inst.ruleName, []);
+                groups.get(inst.ruleName).push(inst);
+            }
+
+            let rows = [];
+            for (const [ruleName, instances] of groups) {
+                instances.sort((a, b) => a.expiresAt - b.expiresAt);
+                const soonest = instances[0];
+                const remaining = (soonest.expiresAt - now) / 1000;
+                rows.push({
+                    ruleName,
+                    label: soonest.label,
+                    color: soonest.color,
+                    remaining,
+                    duration: soonest.durationSeconds,
+                    overdue: remaining < 0,
+                    count: instances.length,
+                });
+            }
+
+            // Nothing running and not previewing - hide the panel entirely rather than leave an
+            // empty bordered box floating over the game. watchContentSize's ResizeObserver picks
+            // this up automatically and the WPF host shrinks to match, same as everywhere else.
+            if (rows.length === 0 && !previewMode) {
+                panelEl.style.display = 'none';
+                return;
+            }
+            panelEl.style.display = 'flex';
+
+            if (rows.length === 0 && previewMode) {
+                rows = [
+                    { ruleName: '__preview1', label: 'Example Timer', color: DEFAULT_COLOR, remaining: 18.4, duration: 30, overdue: false, count: 1 },
+                    { ruleName: '__preview2', label: 'Example Timer 2', color: DEFAULT_COLOR, remaining: 7.2, duration: 20, overdue: false, count: 2 },
+                    { ruleName: '__preview3', label: 'Overdue Example', color: DEFAULT_COLOR, remaining: -3.1, duration: 15, overdue: true, count: 1 },
+                ];
+            }
+
+            // Soonest-expiring first. An overdue row's remaining is negative, so it naturally sorts
+            // above everything still counting down - more urgent than "about to expire soon".
+            rows.sort((a, b) => a.remaining - b.remaining);
+
+            const seen = new Set();
+            rows.forEach((row, index) => {
+                seen.add(row.ruleName);
+                let el = barElements.get(row.ruleName);
+                if (!el) {
+                    el = document.createElement('div');
+                    el.className = 'bar';
+                    el.innerHTML = `
+              <div class="bar-fill"></div>
+              <div class="bar-label"></div>
+              <div class="bar-time"></div>`;
+                    barElements.set(row.ruleName, el);
+                }
+
+                const pct = row.overdue ? 100 : Math.max(0, Math.min(100, (row.remaining / row.duration) * 100));
+                el.querySelector('.bar-fill').style.width = pct + '%';
+                el.querySelector('.bar-fill').style.background = row.overdue ? '#ff4136' : row.color;
+                el.querySelector('.bar-label').textContent = row.count > 1 ? `${row.label} x${row.count}` : row.label;
+                el.querySelector('.bar-time').textContent = row.overdue
+                    ? '+' + Math.abs(row.remaining).toFixed(1)
+                    : row.remaining.toFixed(1);
+                el.classList.toggle('expiring-soon', !row.overdue && row.remaining <= EXPIRES_SOON_SECONDS);
+                el.classList.toggle('overdue', row.overdue);
+
+                // Only touch the DOM if this element isn't already in the right slot - appendChild
+                // (even re-appending the same node) removes and re-inserts it, which resets any CSS
+                // animation on it. This runs every 100ms, far faster than the pulse animation
+                // completes one cycle, so reordering unconditionally would reset the pulse constantly.
+                if (panelEl.children[index] !== el) {
+                    panelEl.insertBefore(el, panelEl.children[index] || null);
+                }
+            });
+
+            for (const [ruleName, el] of barElements) {
+                if (!seen.has(ruleName)) {
+                    el.remove();
+                    barElements.delete(ruleName);
+                }
+            }
+        }
+
+        function onClearTimers() {
+            activeInstances.clear();
+            renderBars();
+        }
+
+        watchContentSize();
+        connectOverlay({ timerStarted: onTimerStarted, clearTimers: onClearTimers });
+        setInterval(renderBars, 100);
+    </script>
+</body>
+</html>

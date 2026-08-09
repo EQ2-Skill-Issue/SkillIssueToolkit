@@ -1,0 +1,4 @@
+<Solution>
+	<Project Path="ActPlugin/SkillIssueToolkit.ActPlugin.csproj" />
+	<Project Path="Overlay/SkillIssueToolkit.Overlay.csproj" />
+</Solution>

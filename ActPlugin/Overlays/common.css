@@ -1,0 +1,33 @@
+/* Shared across all overlay pages - link this instead of duplicating the palette/fonts. */
+:root {
+  --ink: #1a140f;
+  --parchment: #ece1c8;
+  --parchment-dim: #8a7d61;
+  --brass: #c99a3c;
+  --rust: #a8462a;
+  --verdigris: #6b8a7a;
+  --shadow: #3a2f22;
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; background: transparent;
+  color: var(--parchment);
+  overflow: hidden;
+  font-family: "Roboto Condensed", "Segoe UI", sans-serif;
+}
+
+#customTooltip {
+  position: fixed;
+  display: none;
+  background: rgba(20, 15, 11, 0.97);
+  border: 1px solid var(--brass);
+  border-radius: 4px;
+  color: var(--parchment);
+  font-family: "Roboto Condensed", "Segoe UI", sans-serif;
+  font-size: 11px;
+  padding: 3px 8px;
+  pointer-events: none;
+  z-index: 10000;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.5);
+}
