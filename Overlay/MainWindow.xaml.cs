@@ -71,6 +71,12 @@ namespace SkillIssueToolkit.Overlay
         [DllImport("user32.dll")]
         private static extern bool UnregisterHotKey(IntPtr hWnd, int id);
 
+        [DllImport("user32.dll")]
+        private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint uFlags);
+
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
         [StructLayout(LayoutKind.Sequential)]
         private struct RECT
         {
@@ -92,11 +98,17 @@ namespace SkillIssueToolkit.Overlay
         private const uint VK_OEM_MINUS = 0xBD; // the "-/_" key
         private const uint VK_0 = 0x30;
 
+        private const uint SWP_NOMOVE = 0x0002;
+        private const uint SWP_NOSIZE = 0x0001;
+        private const uint SWP_NOACTIVATE = 0x0010;
+        private const uint GW_HWNDPREV = 3;
+        private static readonly IntPtr HWND_TOP = IntPtr.Zero;
+
         // settingsKey "" (or null) preserves the unkeyed settings.json path used by the DPS
-        // overlay; a second instance should pass a distinct key (e.g. "triggers") for its own
-        // file. fallbackLeft/fallbackTop/fallbackAllowDragging/fallbackClickThrough only apply
-        // when no settings file exists yet, letting each overlay default differently (e.g.
-        // triggers defaults click-through with no grip strip, as a passive display).
+        // overlay; a second instance should pass a distinct key (e.g. "notifications") for its
+        // own file. fallbackLeft/fallbackTop/fallbackAllowDragging/fallbackClickThrough only
+        // apply when no settings file exists yet, letting each overlay default differently
+        // (e.g. notifications defaults click-through with no grip strip, as a passive display).
         public MainWindow(string overlayUrl, string settingsKey, double fallbackLeft = 40, double fallbackTop = 40,
             bool fallbackAllowDragging = true, bool fallbackClickThrough = false)
         {
@@ -153,6 +165,7 @@ namespace SkillIssueToolkit.Overlay
             var source = HwndSource.FromHwnd(_selfHwnd);
             source?.AddHook(WndProc);
 
+            PinAboveGameWindow();
             StartFocusWatcher();
             RestoreSettings();
 
@@ -451,8 +464,11 @@ namespace SkillIssueToolkit.Overlay
             return IntPtr.Zero;
         }
 
-        // Mirrors OverlayPlugin's auto-hide-when-game-unfocused behavior - otherwise
-        // Topmost="True" keeps the panel floating over every window, not just the game.
+        // Mirrors OverlayPlugin's auto-hide-when-game-unfocused behavior as a secondary
+        // safeguard for overlay clutter. The primary defense against covering other windows
+        // is PinAboveGameWindow(), called every tick below, which keeps this window pinned
+        // directly above EQ2 in the z-order rather than using WS_EX_TOPMOST - so it no longer
+        // floats over every window on the desktop, only EQ2 itself.
         // Also checks auto-exit-on-ACT-close on this same timer, which catches a crash too
         // since it doesn't depend on ACT calling DeInitPlugin.
         private void StartFocusWatcher()
@@ -468,6 +484,7 @@ namespace SkillIssueToolkit.Overlay
 
                 UpdateVisibilityForForegroundWindow();
                 if (_lockToWindow) TrackGameWindowPosition();
+                PinAboveGameWindow();
                 CheckForExternalSettingsChanges();
             };
             _focusTimer.Start();
@@ -522,6 +539,25 @@ namespace SkillIssueToolkit.Overlay
 
             Left = rect.Left + _lockOffsetX;
             Top = rect.Top + _lockOffsetY;
+        }
+
+        // Keeps the overlay directly above the EQ2 window in the z-order, instead of using
+        // WS_EX_TOPMOST (Topmost="True" in XAML), which would float it above every window on
+        // the desktop. SetWindowPos's hWndInsertAfter places THIS window directly BEHIND the
+        // given handle - so to end up above EQ2, hWndInsertAfter must be whatever window is
+        // currently sitting directly above EQ2 (found via GW_HWNDPREV), not EQ2 itself. If
+        // nothing is above EQ2, that's HWND_TOP. Skipping the call when the overlay is already
+        // in that spot (the common steady-state case) avoids needless z-order churn every tick.
+        private void PinAboveGameWindow()
+        {
+            var gameHwnd = GetGameWindowHandle();
+            if (gameHwnd == IntPtr.Zero || _selfHwnd == IntPtr.Zero) return;
+
+            var windowAboveGame = GetWindow(gameHwnd, GW_HWNDPREV);
+            if (windowAboveGame == _selfHwnd) return;
+
+            var insertAfter = windowAboveGame == IntPtr.Zero ? HWND_TOP : windowAboveGame;
+            SetWindowPos(_selfHwnd, insertAfter, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
 
         private void SetClickThrough(bool enabled)

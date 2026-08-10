@@ -6,7 +6,6 @@
         WindowStyle="None"
         AllowsTransparency="True"
         Background="#01000000"
-        Topmost="True"
         ShowInTaskbar="False"
         ResizeMode="NoResize"
         Width="566" Height="70"

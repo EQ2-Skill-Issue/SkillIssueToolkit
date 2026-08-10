@@ -8,23 +8,23 @@ using Newtonsoft.Json;
 
 namespace SkillIssueToolkit.ActPlugin
 {
-    // Loads and merges the two trigger rule sources:
-    //  - "Default": SkillIssueToolkit's own bundled triggers, refreshed from a remote URL on
-    //    startup and cached to disk so the plugin still has rules if the fetch fails (no
-    //    internet, GitHub down, etc). Never edited by hand.
+    // Loads and merges the two notification rule sources:
+    //  - "Default": SkillIssueToolkit's own bundled notifications, refreshed from a remote
+    //    URL on startup and cached to disk so the plugin still has rules if the fetch fails
+    //    (no internet, GitHub down, etc). Never edited by hand.
     //  - "Custom": the user's own local additions, never touched by the remote fetch.
     //
-    // Each loaded rule gets tagged with its Source (see TriggerRule.Source) so cooldowns,
-    // the settings UI, and per-rule disable can tell same-named rules from different files
-    // apart.
-    public static class TriggerSourceManager
+    // Each loaded rule gets tagged with its Source (see NotificationRule.Source) so
+    // cooldowns, the settings UI, and per-rule disable can tell same-named rules from
+    // different files apart.
+    public static class NotificationSourceManager
     {
-        private const string DefaultRulesFileName = "eq2overlay-triggers.default.json";
-        private const string CustomRulesFileName = "eq2overlay-triggers.custom.json";
+        private const string DefaultRulesFileName = "eq2overlay-notifications.default.json";
+        private const string CustomRulesFileName = "eq2overlay-notifications.custom.json";
 
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
 
-        static TriggerSourceManager()
+        static NotificationSourceManager()
         {
             Http.DefaultRequestHeaders.UserAgent.ParseAdd("SkillIssueToolkit-ActPlugin");
         }
@@ -33,45 +33,45 @@ namespace SkillIssueToolkit.ActPlugin
 
         public static string CustomRulesPath(string pluginDir) => Path.Combine(pluginDir, CustomRulesFileName);
 
-        // Fetches the default rules from settings.DefaultTriggersUrl and overwrites the
+        // Fetches the default rules from settings.DefaultNotificationsUrl and overwrites the
         // cached copy on disk - only if the response parses as a valid rule list, so a bad
         // fetch (network blip, malformed JSON) never clobbers the last known good cache.
-        // Call this before LoadAll if AutoUpdateDefaultTriggers is on; safe to skip otherwise.
-        public static async Task<bool> RefreshDefaultRulesAsync(string pluginDir, TriggerSettings settings, Action<string> log)
+        // Call this before LoadAll if AutoUpdateDefaultNotifications is on; safe to skip otherwise.
+        public static async Task<bool> RefreshDefaultRulesAsync(string pluginDir, NotificationSettings settings, Action<string> log)
         {
-            if (string.IsNullOrWhiteSpace(settings.DefaultTriggersUrl)) return false;
+            if (string.IsNullOrWhiteSpace(settings.DefaultNotificationsUrl)) return false;
 
             try
             {
-                var response = await Http.GetAsync(settings.DefaultTriggersUrl);
+                var response = await Http.GetAsync(settings.DefaultNotificationsUrl);
                 if (!response.IsSuccessStatusCode)
                 {
-                    log?.Invoke("TriggerSourceManager: default trigger fetch failed with " + (int)response.StatusCode + " - keeping cached copy");
+                    log?.Invoke("NotificationSourceManager: default notification fetch failed with " + (int)response.StatusCode + " - keeping cached copy");
                     return false;
                 }
 
                 var json = await response.Content.ReadAsStringAsync();
-                var parsed = JsonConvert.DeserializeObject<List<TriggerRule>>(json);
+                var parsed = JsonConvert.DeserializeObject<List<NotificationRule>>(json);
                 if (parsed == null)
                 {
-                    log?.Invoke("TriggerSourceManager: default trigger fetch returned unparseable JSON - keeping cached copy");
+                    log?.Invoke("NotificationSourceManager: default notification fetch returned unparseable JSON - keeping cached copy");
                     return false;
                 }
 
                 File.WriteAllText(DefaultRulesPath(pluginDir), json);
-                log?.Invoke("TriggerSourceManager: refreshed default triggers (" + parsed.Count + " rule(s))");
+                log?.Invoke("NotificationSourceManager: refreshed default notifications (" + parsed.Count + " rule(s))");
                 return true;
             }
             catch (Exception ex)
             {
-                log?.Invoke("TriggerSourceManager: default trigger fetch failed - keeping cached copy: " + ex.Message);
+                log?.Invoke("NotificationSourceManager: default notification fetch failed - keeping cached copy: " + ex.Message);
                 return false;
             }
         }
 
         // Loads the cached default file and the local custom file, tags each rule with its
-        // Source, and drops any rule the user has individually disabled in TriggerSettings.
-        public static List<TriggerRule> LoadAll(string pluginDir, TriggerSettings settings, Action<string> log)
+        // Source, and drops any rule the user has individually disabled in NotificationSettings.
+        public static List<NotificationRule> LoadAll(string pluginDir, NotificationSettings settings, Action<string> log)
         {
             var defaultRules = LoadFile(DefaultRulesPath(pluginDir), "Default", log);
             var customRules = LoadFile(CustomRulesPath(pluginDir), "Custom", log);
@@ -80,7 +80,7 @@ namespace SkillIssueToolkit.ActPlugin
                 .Where(r => !settings.IsDisabled(r.Source, r.Name))
                 .ToList();
 
-            log?.Invoke("TriggerSourceManager: loaded " + defaultRules.Count + " default + " + customRules.Count +
+            log?.Invoke("NotificationSourceManager: loaded " + defaultRules.Count + " default + " + customRules.Count +
                 " custom rule(s), " + all.Count + " active after disabled filtering");
 
             return all;
@@ -88,31 +88,31 @@ namespace SkillIssueToolkit.ActPlugin
 
         // Also returns disabled rules, tagged, for the settings UI's per-rule checkbox list -
         // LoadAll alone can't show a rule the user has already turned off.
-        public static List<TriggerRule> LoadAllIncludingDisabled(string pluginDir, Action<string> log)
+        public static List<NotificationRule> LoadAllIncludingDisabled(string pluginDir, Action<string> log)
         {
             var defaultRules = LoadFile(DefaultRulesPath(pluginDir), "Default", log);
             var customRules = LoadFile(CustomRulesPath(pluginDir), "Custom", log);
             return defaultRules.Concat(customRules).ToList();
         }
 
-        private static List<TriggerRule> LoadFile(string path, string source, Action<string> log)
+        private static List<NotificationRule> LoadFile(string path, string source, Action<string> log)
         {
             try
             {
                 if (File.Exists(path))
                 {
                     var json = File.ReadAllText(path);
-                    var rules = JsonConvert.DeserializeObject<List<TriggerRule>>(json) ?? new List<TriggerRule>();
+                    var rules = JsonConvert.DeserializeObject<List<NotificationRule>>(json) ?? new List<NotificationRule>();
                     foreach (var rule in rules) rule.Source = source;
                     return rules;
                 }
             }
             catch (Exception ex)
             {
-                log?.Invoke("TriggerSourceManager: failed to load " + path + " - " + ex.Message);
+                log?.Invoke("NotificationSourceManager: failed to load " + path + " - " + ex.Message);
             }
 
-            return new List<TriggerRule>();
+            return new List<NotificationRule>();
         }
     }
 }

@@ -17,12 +17,17 @@
              --name-col-width: 130px;
              --num-col-width: 46px;
              --num-col-count: 9;
+             --scrollbar-width: 8px; /* must stay in sync with .table-scroll's ::-webkit-scrollbar width below */
          }
 
          #panel {
              /* border-box: this is the outer width, so padding (20px L/R) and border (2px L/R) are
-        added on top of the content width the columns need, not subtracted from it. */
-             width: calc(var(--name-col-width) + var(--num-col-count) * var(--num-col-width) + 22px);
+        added on top of the content width the columns need, not subtracted from it.
+        --scrollbar-width is added on top of that so a visible scrollbar (once the row count
+        grows past .table-scroll's max-height) has its own reserved space rather than
+        overlapping the rightmost column - table-layout:fixed only sizes columns against
+        .table-scroll's content box, which shrinks to make room for a scrollbar without this. */
+             width: calc(var(--name-col-width) + var(--num-col-count) * var(--num-col-width) + var(--scrollbar-width) + 22px);
              background: linear-gradient(180deg, rgba(26,20,15,0.92), rgba(20,15,11,0.92));
              border: 1px solid var(--brass);
              border-radius: 6px;
@@ -188,7 +193,7 @@
          }
 
              .table-scroll::-webkit-scrollbar {
-                 width: 6px;
+                 width: var(--scrollbar-width);
              }
 
              .table-scroll::-webkit-scrollbar-track {

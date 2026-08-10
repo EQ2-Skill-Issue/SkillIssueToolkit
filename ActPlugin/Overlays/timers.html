@@ -108,42 +108,68 @@
     <script src="common.js"></script>
     <script>
         const panelEl = document.getElementById('panel');
-        const DEFAULT_COLOR = '#6b8a7a'; // matches common.css's --verdigris exactly
         const EXPIRES_SOON_SECONDS = 5; // matches Cactbot's own BarExpiresSoonSeconds concept
+        const OVERDUE_LINGER_SECONDS = 5; // native ACT timers don't carry a linger setting - a short fixed grace period keeps an expired bar from vanishing mid-glance
 
-        // Keyed by InstanceId - each concurrent occurrence of a rule (e.g. the same debuff cast on
-        // two different players) is tracked independently, even though same-named instances get
-        // visually collapsed into one bar at render time (see renderBars below).
-        const activeInstances = new Map();
+        // ACT's own FillColor for a Spell Timer defaults to the same dark blue for basically
+        // every timer unless someone's gone through and hand-picked a color for each one
+        // individually in Options -> Spell Timers - which most people never do, so in practice
+        // every bar here ends up identical and bland. Rather than trust ACT's raw color, each
+        // timer name is hashed to a stable pick from this palette instead - all colors chosen to
+        // sit alongside this project's own brass/parchment/rust/verdigris theme rather than
+        // clashing with it. Stable per name (not re-randomized every render) so a given timer's
+        // color doesn't flicker or change between its own Started/Warning/Expired updates.
+        const TIMER_COLOR_PALETTE = [
+            '#c99a3c', // brass
+            '#6b8a7a', // verdigris
+            '#a8462a', // rust
+            '#7a8fc9', // steel blue
+            '#a36bc9', // amethyst
+            '#c9a36b', // ochre
+            '#6bc9a3', // jade
+            '#c96b8f', // dusty rose
+        ];
 
-        // Keyed by ruleName - reused across renders so the DOM doesn't get rebuilt from scratch
+        function colorForTimerName(name) {
+            let hash = 0;
+            for (let i = 0; i < name.length; i++) {
+                hash = (hash * 31 + name.charCodeAt(i)) | 0;
+            }
+            return TIMER_COLOR_PALETTE[Math.abs(hash) % TIMER_COLOR_PALETTE.length];
+        }
+
+        // Keyed by ACT's own timer Name (unique per Spell Timers entry). ACT's own Spell Timers
+        // window shows exactly one counting-down number per timer name - the master timer's own
+        // remaining time - and completely ignores any other "renewal" entries stacked up
+        // internally (see AlarmTimerBridge's comment on GetLargestVal). We mirror that here:
+        // no xN count, no separate instance layer, just the one number ACT itself reports.
+        const activeTimers = new Map();
+
+        // Keyed by timer Name - reused across renders so the DOM doesn't get rebuilt from scratch
         // every tick, same pattern as dps-meter.html's rowElements.
         const barElements = new Map();
 
-        function onTimerStarted(fired) {
-            // A fresh occurrence of this rule means the wait is over - clear out any existing
-            // instance of the SAME ruleName that's already sitting in an overdue state. This matters
-            // most for infinite-linger timers (TimerOverdueLingerSeconds: -1), which would otherwise
-            // never get cleared at all once superseded - a fresh instance doesn't automatically
-            // remove an old one that's set to never expire on its own. Instances still normally
-            // counting down (not yet overdue) are left alone - concurrent, not-yet-overdue instances
-            // of the same rule are a legitimate case (e.g. cast on two different players) and still
-            // collapse into the "xN" display as before.
+        // AlarmTimerBridge broadcasts this on Started/Warning/Expired, each carrying the same
+        // shape. RemainingSeconds is ACT's own master-timer remaining time (GetLargestVal on the
+        // master SpellTimer only), computed fresh by ACT itself every half-second tick - so we
+        // just take it at face value and recompute our own expiresAt from it every time, rather
+        // than trying to derive/guess a countdown from DurationSeconds. That's what previously
+        // caused the bar to snap back to full duration and "stack" on every Started/Warning/
+        // Expired event instead of counting down smoothly in sync with ACT.
+        function onAlarmTimerUpdate(fired) {
             const now = Date.now();
-            for (const [id, inst] of activeInstances) {
-                if (inst.ruleName === fired.ruleName && now >= inst.expiresAt) {
-                    activeInstances.delete(id);
-                }
-            }
-
-            activeInstances.set(fired.instanceId, {
-                ruleName: fired.ruleName,
-                label: fired.label || fired.ruleName,
-                color: fired.color || DEFAULT_COLOR,
+            activeTimers.set(fired.name, {
+                label: fired.name,
+                color: colorForTimerName(fired.name),
                 durationSeconds: fired.durationSeconds,
-                overdueLingerSeconds: fired.overdueLingerSeconds || 0,
-                expiresAt: now + fired.durationSeconds * 1000,
+                expiresAt: now + fired.remainingSeconds * 1000,
             });
+        }
+
+        // ACT fires this when a timer is removed entirely (deleted from Spell Timers, not just
+        // expired) - clear it immediately rather than waiting out the overdue linger.
+        function onAlarmTimerRemoved(removed) {
+            activeTimers.delete(removed.name);
         }
 
         let previewMode = false;
@@ -160,33 +186,23 @@
         function renderBars() {
             const now = Date.now();
 
-            for (const [id, inst] of activeInstances) {
-                if (inst.overdueLingerSeconds < 0) continue; // -1 = linger indefinitely, only cleared by a fresh occurrence (see onTimerStarted)
-                if (now >= inst.expiresAt + inst.overdueLingerSeconds * 1000) activeInstances.delete(id);
+            for (const [name, timer] of activeTimers) {
+                if (now >= timer.expiresAt + OVERDUE_LINGER_SECONDS * 1000) activeTimers.delete(name);
             }
 
-            // Group remaining instances by ruleName - multiple concurrent instances of the same
-            // rule (e.g. cast on several different players) collapse into one bar showing the
-            // soonest-to-expire time and a count, rather than one row per instance.
-            const groups = new Map();
-            for (const inst of activeInstances.values()) {
-                if (!groups.has(inst.ruleName)) groups.set(inst.ruleName, []);
-                groups.get(inst.ruleName).push(inst);
-            }
-
+            // ACT already gives one entry per timer name - its own Spell Timers window shows a
+            // single remaining-time number per name, with no grouping/stacking, so there's no
+            // grouping step needed here either.
             let rows = [];
-            for (const [ruleName, instances] of groups) {
-                instances.sort((a, b) => a.expiresAt - b.expiresAt);
-                const soonest = instances[0];
-                const remaining = (soonest.expiresAt - now) / 1000;
+            for (const [name, timer] of activeTimers) {
+                const remaining = (timer.expiresAt - now) / 1000;
                 rows.push({
-                    ruleName,
-                    label: soonest.label,
-                    color: soonest.color,
+                    ruleName: name,
+                    label: timer.label,
+                    color: timer.color,
                     remaining,
-                    duration: soonest.durationSeconds,
+                    duration: timer.durationSeconds,
                     overdue: remaining < 0,
-                    count: instances.length,
                 });
             }
 
@@ -201,9 +217,9 @@
 
             if (rows.length === 0 && previewMode) {
                 rows = [
-                    { ruleName: '__preview1', label: 'Example Timer', color: DEFAULT_COLOR, remaining: 18.4, duration: 30, overdue: false, count: 1 },
-                    { ruleName: '__preview2', label: 'Example Timer 2', color: DEFAULT_COLOR, remaining: 7.2, duration: 20, overdue: false, count: 2 },
-                    { ruleName: '__preview3', label: 'Overdue Example', color: DEFAULT_COLOR, remaining: -3.1, duration: 15, overdue: true, count: 1 },
+                    { ruleName: '__preview1', label: 'Example Timer', color: colorForTimerName('Example Timer'), remaining: 18.4, duration: 30, overdue: false },
+                    { ruleName: '__preview2', label: 'Example Timer 2', color: colorForTimerName('Example Timer 2'), remaining: 7.2, duration: 20, overdue: false },
+                    { ruleName: '__preview3', label: 'Overdue Example', color: colorForTimerName('Overdue Example'), remaining: -3.1, duration: 15, overdue: true },
                 ];
             }
 
@@ -228,7 +244,7 @@
                 const pct = row.overdue ? 100 : Math.max(0, Math.min(100, (row.remaining / row.duration) * 100));
                 el.querySelector('.bar-fill').style.width = pct + '%';
                 el.querySelector('.bar-fill').style.background = row.overdue ? '#ff4136' : row.color;
-                el.querySelector('.bar-label').textContent = row.count > 1 ? `${row.label} x${row.count}` : row.label;
+                el.querySelector('.bar-label').textContent = row.label;
                 el.querySelector('.bar-time').textContent = row.overdue
                     ? '+' + Math.abs(row.remaining).toFixed(1)
                     : row.remaining.toFixed(1);
@@ -253,12 +269,12 @@
         }
 
         function onClearTimers() {
-            activeInstances.clear();
+            activeTimers.clear();
             renderBars();
         }
 
         watchContentSize();
-        connectOverlay({ timerStarted: onTimerStarted, clearTimers: onClearTimers });
+        connectOverlay({ alarmTimerUpdate: onAlarmTimerUpdate, alarmTimerRemoved: onAlarmTimerRemoved, clearAlarmTimers: onClearTimers });
         setInterval(renderBars, 100);
     </script>
 </body>

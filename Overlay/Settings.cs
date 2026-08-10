@@ -11,7 +11,7 @@ namespace SkillIssueToolkit.Overlay
     //
     // An empty/null key maps to the unkeyed "settings.json" path, matching what
     // OverlayHostSettings.cs on the plugin side expects for the DPS overlay; a named
-    // instance (e.g. "triggers") gets its own file.
+    // instance (e.g. "notifications") gets its own file.
     public class OverlaySettings
     {
         public double Left { get; set; } = 40;

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>EQ2 Trigger Alerts</title>
+    <title>EQ2 Notifications</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Roboto+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
@@ -112,7 +112,7 @@
         }
 
         watchContentSize();
-        connectOverlay({ triggerFired: addLine });
+        connectOverlay({ notificationFired: addLine });
 
         // Preview mode: shows static placeholder text so the overlay is visible enough to grab
         // and position even when nothing has fired - the panel is otherwise invisible whenever
@@ -147,4 +147,3 @@
         }
     </script>
 </body>
-</html>

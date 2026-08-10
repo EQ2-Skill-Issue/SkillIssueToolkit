@@ -31,9 +31,17 @@ namespace SkillIssueToolkit.ActPlugin
         private readonly int _port;
         private CancellationTokenSource _cts;
 
-        // Wired by Plugin.cs to TriggerEngine.EvaluateLine - lets test.html inject an
+        // Wired by Plugin.cs to NotificationEngine.EvaluateLine - lets test.html inject an
         // arbitrary line through the exact same matching code the live game path uses.
         public Action<string> OnTestLine { get; set; }
+
+        // Wired by Plugin.cs to append a new rule to the custom notifications file and reload
+        // the engine - lets notification-builder.html save a rule without hand-editing JSON.
+        public Action<NotificationRule> OnSaveNotification { get; set; }
+
+        // Wired by Plugin.cs to flip LogLineCapture on/off - lets notification-builder.html
+        // start capture itself instead of requiring the ACT settings tab.
+        public Action OnToggleCapture { get; set; }
 
         public OverlayServer(string overlaysRoot, int port = 5000)
         {
@@ -85,9 +93,17 @@ namespace SkillIssueToolkit.ActPlugin
                 {
                     _ = HandleTestLineAsync(ctx, token);
                 }
-                else if (ctx.Request.HttpMethod == "POST" && ctx.Request.Url.AbsolutePath.TrimStart('/') == "clear-timers")
+                else if (ctx.Request.HttpMethod == "POST" && ctx.Request.Url.AbsolutePath.TrimStart('/') == "clear-alarm-timers")
                 {
                     _ = HandleClearTimersAsync(ctx, token);
+                }
+                else if (ctx.Request.HttpMethod == "POST" && ctx.Request.Url.AbsolutePath.TrimStart('/') == "save-notification")
+                {
+                    _ = HandleSaveTriggerAsync(ctx, token);
+                }
+                else if (ctx.Request.HttpMethod == "POST" && ctx.Request.Url.AbsolutePath.TrimStart('/') == "toggle-capture")
+                {
+                    _ = HandleToggleCaptureAsync(ctx, token);
                 }
                 else
                 {
@@ -97,11 +113,13 @@ namespace SkillIssueToolkit.ActPlugin
         }
 
         // Wipes every active timer bar in timers.html - a direct broadcast, no matching logic.
+        // This only clears the local overlay view - the underlying timers are ACT's own native
+        // Spell Timers and are unaffected.
         private async Task HandleClearTimersAsync(HttpListenerContext ctx, CancellationToken token)
         {
             try
             {
-                Broadcast("clearTimers", new { });
+                Broadcast("clearAlarmTimers", new { });
                 ctx.Response.StatusCode = 200;
             }
             catch
@@ -114,8 +132,8 @@ namespace SkillIssueToolkit.ActPlugin
             }
         }
 
-        // Lets test.html inject an arbitrary line for TriggerEngine to evaluate through the
-        // exact same matching code the live game path uses - see EvaluateLine in TriggerEngine.cs.
+        // Lets test.html inject an arbitrary line for NotificationEngine to evaluate through
+        // the exact same matching code the live game path uses - see EvaluateLine in NotificationEngine.cs.
         private async Task HandleTestLineAsync(HttpListenerContext ctx, CancellationToken token)
         {
             try
@@ -133,6 +151,58 @@ namespace SkillIssueToolkit.ActPlugin
             {
                 ctx.Response.Close();
             }
+        }
+
+        // Lets notification-builder.html post a finished NotificationRule straight into the
+        // custom rules file and hot-reload the engine, via the same OnSaveNotification
+        // callback pattern OnTestLine uses.
+        private async Task HandleSaveTriggerAsync(HttpListenerContext ctx, CancellationToken token)
+        {
+            try
+            {
+                using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
+                var json = await reader.ReadToEndAsync();
+                var rule = JsonConvert.DeserializeObject<NotificationRule>(json);
+                if (rule == null || string.IsNullOrWhiteSpace(rule.Name) || string.IsNullOrWhiteSpace(rule.Pattern))
+                {
+                    ctx.Response.StatusCode = 400;
+                }
+                else
+                {
+                    OnSaveNotification?.Invoke(rule);
+                    ctx.Response.StatusCode = 200;
+                }
+            }
+            catch
+            {
+                ctx.Response.StatusCode = 500;
+            }
+            finally
+            {
+                ctx.Response.Close();
+            }
+        }
+
+        // Lets notification-builder.html flip capture on/off itself - actual on/off state is
+        // confirmed back to every connected page via the captureStateChanged broadcast that
+        // LogLineCapture.Start()/Stop() sends, not this response.
+        private async Task HandleToggleCaptureAsync(HttpListenerContext ctx, CancellationToken token)
+        {
+            try
+            {
+                OnToggleCapture?.Invoke();
+                ctx.Response.StatusCode = 200;
+            }
+            catch
+            {
+                ctx.Response.StatusCode = 500;
+            }
+            finally
+            {
+                ctx.Response.Close();
+            }
+
+            await Task.CompletedTask;
         }
 
         private async Task HandleWebSocketAsync(HttpListenerContext ctx, CancellationToken token)

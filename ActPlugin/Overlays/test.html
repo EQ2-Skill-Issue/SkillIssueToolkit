@@ -2,14 +2,14 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>EQ2 Trigger Tester</title>
+    <title>EQ2 Notification Tester</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Roboto+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
     <link href="common.css" rel="stylesheet">
     <style>
            /* Not an in-game overlay - a plain browser tab is fine and arguably better here, since
-        you're pasting/editing text while watching a separate triggers.html/timers.html window
+        you're pasting/editing text while watching a separate notifications.html window
         respond. */
            html, body {
                overflow: visible;
@@ -126,27 +126,21 @@
                    background: rgba(0,0,0,0.2);
                }
 
-           #clearTimersButton {
-               border-color: var(--rust) !important;
-               color: var(--rust) !important;
-           }
-
-               #clearTimersButton:hover {
-                   background: rgba(168,70,42,0.2) !important;
-               }
-    </style>
+           </style>
 </head>
 <body>
     <div id="panel">
-        <h1>Trigger Tester</h1>
+        <h1>Notification Tester</h1>
         <p class="hint">
             Paste a raw log line (with or without the leading [timestamp] bracket - rules match
             against whatever ActGlobals gives as logLine, and it's not confirmed whether that
             includes the bracket or not) and fire it through the real rule set. If it matches,
-            open triggers.html/timers.html in another window to see the alert/bar render - this
-            runs the exact same matching code the live game path uses, not a simulation. Sample
-            buttons below fire independently of this box - clicking one doesn't touch what's
-            typed here, and typing here doesn't get affected by whichever sample you last clicked.
+            open notifications.html in another window to see the alert render - this runs the
+            exact same matching code the live game path uses, not a simulation. Countdown timers
+            are no longer authored here - those come from ACT's own native Spell Timers, viewable
+            live in timers.html. Sample buttons below fire independently of this box - clicking
+            one doesn't touch what's typed here, and typing here doesn't get affected by whichever
+            sample you last clicked.
         </p>
         <textarea id="lineInput" placeholder="You have been slain by a grove badger."></textarea>
         <br>
@@ -168,15 +162,7 @@
             <button class="sample" data-line="Gabriel is afflicted with a curse.">ExampleRequirePlayerMatch - only fires if "Gabriel" is your own character</button>
         </fieldset>
 
-        <fieldset class="samples">
-            <legend>Timer features (check timers.html)</legend>
-            <button class="sample" data-line="You feel much better.">ExamplePureTimer - starts a 60s bar, no text alert</button>
-            <button class="sample" data-line="You have been slain by a grove badger.">ExampleAlertPlusTimer - both a text alert AND a 15s red bar</button>
-            <button class="sample" data-line="Gabriel has been defeated.">ExampleOverdueTimer - 8s bar, then lingers red/overdue for 10s before disappearing</button>
-            <button class="sample" data-line="You feel much better.">ExampleInfiniteOverdueTimer - 6s bar, then lingers red forever until it happens again</button>
-            <button id="clearTimersButton" style="margin-top: 6px;">Clear All Timers</button>
-        </fieldset>
-    </div>
+        </div>
 
     <script>
         const lineInput = document.getElementById('lineInput');
@@ -194,7 +180,7 @@
                 const res = await fetch('/test-line', { method: 'POST', body: line });
                 if (res.ok) {
                     statusEl.className = 'ok';
-                    statusEl.textContent = 'Sent - check triggers.html/timers.html for a matching alert.';
+                    statusEl.textContent = 'Sent - check notifications.html for a matching alert.';
                 } else {
                     statusEl.className = 'error';
                     statusEl.textContent = 'Server returned an error (status ' + res.status + ').';
@@ -215,19 +201,6 @@
         });
 
         fireButton.addEventListener('click', () => fireLine(lineInput.value.trim()));
-
-        document.getElementById('clearTimersButton').addEventListener('click', async () => {
-            statusEl.className = '';
-            statusEl.textContent = 'Clearing timers...';
-            try {
-                const res = await fetch('/clear-timers', { method: 'POST' });
-                statusEl.className = res.ok ? 'ok' : 'error';
-                statusEl.textContent = res.ok ? 'Cleared - every bar in timers.html should be gone.' : 'Server returned an error (status ' + res.status + ').';
-            } catch (err) {
-                statusEl.className = 'error';
-                statusEl.textContent = 'Failed to reach the plugin - is it running? (' + err + ')';
-            }
-        });
     </script>
 </body>
 </html>

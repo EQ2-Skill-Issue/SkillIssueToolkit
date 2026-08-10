@@ -47,14 +47,14 @@ Write-Host "== Assembling dist folder ==" -ForegroundColor Cyan
 Copy-Item (Join-Path $actPluginOut "SkillIssueToolkit.ActPlugin.dll") $distOut
 Copy-Item (Join-Path $actPluginOut "Newtonsoft.Json.dll") $distOut
 
-# Sample trigger rules - copied straight from source rather than the build output, since
+# Sample notification rules - copied straight from source rather than the build output, since
 # they're static files the plugin reads at runtime, not something compiled. (They're also
 # copied to the build output directly via the .csproj, for local dev convenience - this
 # script doesn't depend on that, in case the two ever drift.) The default file is only a
 # seed - the plugin re-fetches and overwrites it from GitHub on startup unless the user has
 # turned that off.
-Copy-Item (Join-Path $actPluginDir "eq2overlay-triggers.default.json") $distOut
-Copy-Item (Join-Path $actPluginDir "eq2overlay-triggers.custom.json") $distOut
+Copy-Item (Join-Path $actPluginDir "eq2overlay-notifications.default.json") $distOut
+Copy-Item (Join-Path $actPluginDir "eq2overlay-notifications.custom.json") $distOut
 
 # Deliberately NOT copying eq2overlay-settings.json here. It's tempting (it'd carry a
 # pre-configured Census Service ID into what you distribute, saving guildmates a setup

@@ -11,12 +11,12 @@ namespace SkillIssueToolkit.Overlay
         // hardcoded port (5000) as the plugin's default.
         //
         // AllowDragging/ClickThrough fallbacks only apply on a fresh install: the DPS meter
-        // defaults draggable and not click-through, while triggers/timers are passive
+        // defaults draggable and not click-through, while notifications/timers are passive
         // displays that default click-through instead.
         private static readonly (string Key, string HtmlFile, double FallbackLeft, double FallbackTop, bool FallbackAllowDragging, bool FallbackClickThrough)[] Overlays =
         {
             ("", "dps-meter.html", 40, 40, true, false),
-            ("triggers", "triggers.html", 40, 380, false, true),
+            ("notifications", "notifications.html", 40, 380, false, true),
             ("timers", "timers.html", 500, 40, false, true),
         };
 

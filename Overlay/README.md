@@ -16,14 +16,14 @@ SkillIssueToolkit.Overlay.exe  →  one MainWindow per overlay page (see App.xam
 `App.xaml.cs`'s `Overlays` array is the single source of truth for which pages get their
 own window - each entry is `(settingsKey, htmlFile, fallbackLeft, fallbackTop)`. Today
 that's the DPS meter (`dps-meter.html`, unkeyed settings file for backward compatibility)
-and triggers (`triggers.html`, `"triggers"` key, its own settings file). Adding another
-overlay page is one line in that array, not a new class.
+and notifications (`notifications.html`, `"notifications"` key, its own settings file).
+Adding another overlay page is one line in that array, not a new class.
 
 ## Per-window settings
 
 Each window persists independently to `%AppData%\SkillIssueToolkit.Overlay\settings.json`
 (the DPS overlay, unkeyed) or `settings-{key}.json` (any other overlay, e.g.
-`settings-triggers.json`). The ACT plugin's own settings tab edits these same files
+`settings-notifications.json`). The ACT plugin's own settings tab edits these same files
 directly and this app polls for external changes every ~300ms, so a change made in ACT
 takes effect within about a third of a second without restarting anything.
 

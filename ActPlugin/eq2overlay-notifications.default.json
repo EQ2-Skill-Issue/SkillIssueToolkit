@@ -44,34 +44,5 @@
     "DisplayText": "You are cursed!",
     "Severity": "Alarm",
     "RequirePlayerMatch": "who"
-  },
-  {
-    "Name": "ExamplePureTimer",
-    "Pattern": "You feel much better\\.",
-    "TimerDurationSeconds": 60,
-    "TimerLabel": "Feign Death Recast"
-  },
-  {
-    "Name": "ExampleAlertPlusTimer",
-    "Pattern": "^You have been slain by (?<who>.+)\\.$",
-    "DisplayText": "Killed by {who}! (also starting a 15s example timer)",
-    "Severity": "Alarm",
-    "TimerDurationSeconds": 15,
-    "TimerLabel": "Example Recast",
-    "TimerColor": "#ff4136"
-  },
-  {
-    "Name": "ExampleOverdueTimer",
-    "Pattern": "Gabriel has been defeated\\.",
-    "TimerDurationSeconds": 8,
-    "TimerLabel": "Overdue Example",
-    "TimerOverdueLingerSeconds": 10
-  },
-  {
-    "Name": "ExampleInfiniteOverdueTimer",
-    "Pattern": "You feel much better\\.",
-    "TimerDurationSeconds": 6,
-    "TimerLabel": "Never Falls Off Until It Happens Again",
-    "TimerOverdueLingerSeconds": -1
   }
 ]

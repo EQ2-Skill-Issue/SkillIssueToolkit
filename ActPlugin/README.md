@@ -1,7 +1,7 @@
 # Skill Issue Toolkit - ACT Plugin
 
-A combat overlay, trigger/alert system, and countdown timers for EverQuest 2, built on
-Advanced Combat Tracker (ACT).
+A combat overlay, notification/alert system, and countdown timer overlay for EverQuest 2,
+built on Advanced Combat Tracker (ACT).
 
 ```
 EQ2 game
@@ -14,7 +14,7 @@ SkillIssueToolkit.ActPlugin (this project) - reads ACT's combat data, runs an HT
 SkillIssueToolkit.Overlay.exe - one window per overlay page
    │
    ├── dps-meter.html
-   ├── triggers.html
+   ├── notifications.html
    └── timers.html
 ```
 
@@ -57,22 +57,26 @@ read from ACT's own active log file path, so no configuration is required for th
 - A personal Census service ID can be set in the settings tab for higher throughput. Do not
   share a personal service ID with anyone else - Census's own policy prohibits it.
 
-## Trigger alerts
+## Notifications
 
 Regex-matched log-line alerts in three severity tiers: **Alarm** (large, red), **Alert**
-(medium, gold), **Info** (small, green).
+(medium, gold), **Info** (small, green). Named "Notifications" (not "Triggers") to
+differentiate them from ACT's own built-in Custom Triggers feature - see below for how the
+two relate.
 
-*[screenshot: triggers.html showing one or more severity tiers]*
+*[screenshot: notifications.html showing one or more severity tiers]*
 
 Rules come from two files, both siblings of the plugin DLL (not inside `Overlays/`):
 
-- `eq2overlay-triggers.default.json` - SkillIssueToolkit's own bundled triggers. Auto-updated
-  from GitHub on startup (and whenever you click **Check for Trigger Updates**), so a guild
-  or group using this plugin picks up new/changed triggers without anyone redistributing
-  files. Not meant to be hand-edited - it gets overwritten on every successful refresh. Turn
-  this off in the settings tab if you'd rather manage it yourself.
-- `eq2overlay-triggers.custom.json` - your own additions. Never touched by the auto-update;
-  edit this one directly for anything personal or guild-specific that isn't in the default set.
+- `eq2overlay-notifications.default.json` - SkillIssueToolkit's own bundled notifications.
+  Auto-updated from GitHub on startup (and whenever you click **Check for Notification
+  Updates**), so a guild or group using this plugin picks up new/changed notifications
+  without anyone redistributing files. Not meant to be hand-edited - it gets overwritten on
+  every successful refresh. Turn this off in the settings tab if you'd rather manage it
+  yourself.
+- `eq2overlay-notifications.custom.json` - your own additions. Never touched by the
+  auto-update; edit this one directly for anything personal or guild-specific that isn't in
+  the default set.
 
 Every rule is tagged internally with which file it came from (`Default` or `Custom`), which
 also means a default rule and a custom rule can share a `Name` without their cooldowns
@@ -89,31 +93,30 @@ colliding. Fields:
 | `RequirePlayerMatch` | Names a capture group that must equal your own character name for the rule to fire |
 
 After editing the custom rules file, click **Reload From Disk** in the settings tab (or
-restart ACT) to apply the changes. The settings tab also lists every loaded trigger,
+restart ACT) to apply the changes. The settings tab also lists every loaded notification,
 regardless of which file it came from, with a checkbox to disable any individual one
-without editing JSON.
+without editing JSON. `notification-builder.html` (opened via the settings tab's **Open
+Notification Builder** button) captures live log lines and helps compose a new rule
+without hand-editing JSON at all.
 
 `http://localhost:5000/test.html` fires any line - typed or from a set of grouped samples -
 through the live matching engine, for testing without needing to reproduce something in-game.
 
 ## Timer bars
 
-Countdown bars for recurring abilities. A rule becomes a timer by setting a duration,
-independent of whether it also shows a text alert. Multiple concurrent instances of the
-same named timer collapse into one bar showing the soonest-to-expire time and a count
-("x2"), sorted soonest-first.
+Countdown bars for recurring abilities, sourced directly from ACT's own native **Spell
+Timers** (Options → Spell Timers) rather than a separate custom timer engine. Configure a
+timer there as you normally would in ACT - it appears automatically in `timers.html` with
+no extra setup on this plugin's side. `AlarmTimerBridge.cs` listens to ACT's
+`OnSpellTimerNotify` / `OnSpellTimerWarning` / `OnSpellTimerExpire` / `OnSpellTimerRemoved`
+events and rebroadcasts them to the overlay. Multiple concurrent occurrences of the same
+named timer are already collapsed by ACT itself into one entry with a count ("x2").
 
 *[screenshot: timers.html with a couple of bars]*
 
-| Field | Purpose |
-|---|---|
-| `TimerDurationSeconds` | Length of the countdown |
-| `TimerLabel` | Bar text - defaults to the rule's `Name` if unset. Supports `{groupName}` interpolation |
-| `TimerColor` | Hex color override for the bar. Unset uses the default color |
-| `TimerOverdueLingerSeconds` | Keeps the bar visible (pulsing, showing elapsed overdue time) for this many extra seconds after it hits zero, instead of disappearing instantly. **-1** keeps it visible indefinitely, until that same timer starts again |
-
-All active bars clear automatically when combat ends, and can be cleared manually from
-`test.html`.
+Color, duration, and warning threshold all come from the timer's own configuration in
+ACT's Spell Timers panel - there's nothing to configure on this plugin's side beyond having
+the timer defined in ACT.
 
 ## Settings tab
 
@@ -139,15 +142,17 @@ restarting.
 - `SkillIssueToolkit.ActPlugin.csproj` - the plugin project (targets net48)
 - `Plugin.cs` - `IActPluginV1` entry point, settings UI
 - `Models.cs` - DPS meter JSON shape
-- `OverlayServer.cs` - HTTP static file serving, WebSocket broadcast, `/test-line`, `/clear-timers`
-- `TriggerRule.cs` / `TriggerEngine.cs` - trigger/timer rule model and matching engine
-- `TriggerSourceManager.cs` - loads/merges the default (remote) and custom (local) rule files
-- `TriggerSettings.cs` - default-triggers URL, auto-update toggle, per-rule disable list
+- `OverlayServer.cs` - HTTP static file serving, WebSocket broadcast, `/test-line`, `/clear-alarm-timers`
+- `NotificationRule.cs` / `NotificationEngine.cs` - notification rule model and matching engine
+- `NotificationSourceManager.cs` - loads/merges the default (remote) and custom (local) rule files
+- `NotificationSettings.cs` - default-notifications URL, auto-update toggle, per-rule disable list
+- `AlarmTimerBridge.cs` - bridges ACT's native Spell Timers events into the overlay broadcast
 - `CensusClassLookup.cs` - Census lookup queue
 - `PluginSettings.cs` - plugin-wide settings (port, Census service ID)
 - `OverlayHostSettings.cs` - per-overlay settings
-- `Overlays/dps-meter.html`, `Overlays/triggers.html`, `Overlays/timers.html` - overlay pages
-- `Overlays/test.html` - trigger/timer tester
+- `Overlays/dps-meter.html`, `Overlays/notifications.html`, `Overlays/timers.html` - overlay pages
+- `Overlays/notification-builder.html` - captures live log lines and helps compose a new notification rule
+- `Overlays/test.html` - notification tester
 - `Overlays/common.js` / `Overlays/common.css` - shared overlay code and theme
-- `eq2overlay-triggers.default.json` - bundled/auto-updated trigger rules
-- `eq2overlay-triggers.custom.json` - your own local trigger rules
+- `eq2overlay-notifications.default.json` - bundled/auto-updated notification rules
+- `eq2overlay-notifications.custom.json` - your own local notification rules

@@ -12,13 +12,12 @@ using Newtonsoft.Json;
 namespace SkillIssueToolkit.ActPlugin
 {
     // Matches regex patterns against every raw log line (chat included) and fires text
-    // alerts and/or countdown timers. One rule can do both - set TimerDurationSeconds and it
-    // starts a bar; set DisplayText and it shows an alert. Timers restart dynamically off log
-    // lines rather than a fixed timeline, since most EQ2 mechanics gate on health percentage.
+    // alerts. Countdown timers are handled separately by AlarmTimerBridge, which renders
+    // ACT's own native Spell Timers instead of anything authored through this engine.
     //
     // logInfo.logLine is the raw text property name on LogLineEventArgs - check this first
     // if it doesn't compile.
-    public sealed class TriggerEngine
+    public sealed class NotificationEngine
     {
         private readonly OverlayServer _server;
         private readonly Action<string> _log;
@@ -26,8 +25,8 @@ namespace SkillIssueToolkit.ActPlugin
         // Rules with no Zone set are always candidates. Zone-scoped rules only get tested
         // while CurrentZone matches, so a line isn't checked against rules that don't apply
         // to wherever you currently are.
-        private readonly List<(TriggerRule Rule, Regex Regex)> _alwaysActive;
-        private readonly Dictionary<string, List<(TriggerRule Rule, Regex Regex)>> _byZone;
+        private readonly List<(NotificationRule Rule, Regex Regex)> _alwaysActive;
+        private readonly Dictionary<string, List<(NotificationRule Rule, Regex Regex)>> _byZone;
 
         // _lastFired gets written from both the log-line thread and any pending
         // DelaySeconds tasks, so it needs a lock.
@@ -43,7 +42,7 @@ namespace SkillIssueToolkit.ActPlugin
         private readonly CancellationTokenSource _consumerCts = new CancellationTokenSource();
         private readonly Task _consumerTask;
 
-        public TriggerEngine(OverlayServer server, IEnumerable<TriggerRule> rules, Action<string> log)
+        public NotificationEngine(OverlayServer server, IEnumerable<NotificationRule> rules, Action<string> log)
         {
             _server = server;
             _log = log;
@@ -75,7 +74,7 @@ namespace SkillIssueToolkit.ActPlugin
         }
 
         // Never do real work here - just hand the line off to the background consumer and
-        // return immediately, so ACT's log-parsing thread is never blocked by trigger matching.
+        // return immediately, so ACT's log-parsing thread is never blocked by notification matching.
         private void OnLogLineRead(bool isImport, LogLineEventArgs logInfo)
         {
             try
@@ -84,7 +83,7 @@ namespace SkillIssueToolkit.ActPlugin
             }
             catch (Exception ex)
             {
-                _log?.Invoke("TriggerEngine error queuing line: " + ex);
+                _log?.Invoke("NotificationEngine error queuing line: " + ex);
             }
         }
 
@@ -103,7 +102,7 @@ namespace SkillIssueToolkit.ActPlugin
                     }
                     catch (Exception ex)
                     {
-                        _log?.Invoke("TriggerEngine error: " + ex);
+                        _log?.Invoke("NotificationEngine error: " + ex);
                     }
                 }
             }
@@ -129,7 +128,7 @@ namespace SkillIssueToolkit.ActPlugin
         {
             if (string.IsNullOrEmpty(line)) return;
 
-            IEnumerable<(TriggerRule Rule, Regex Regex)> candidates = _alwaysActive;
+            IEnumerable<(NotificationRule Rule, Regex Regex)> candidates = _alwaysActive;
             var currentZone = ActGlobals.oFormActMain.CurrentZone;
             if (!string.IsNullOrEmpty(currentZone) && _byZone.TryGetValue(currentZone, out var zoneRules))
             {
@@ -145,7 +144,7 @@ namespace SkillIssueToolkit.ActPlugin
                 }
                 catch (RegexMatchTimeoutException)
                 {
-                    _log?.Invoke("TriggerEngine: rule '" + rule.Name + "' pattern timed out - skipping this line");
+                    _log?.Invoke("NotificationEngine: rule '" + rule.Name + "' pattern timed out - skipping this line");
                     continue;
                 }
                 if (!match.Success) continue;
@@ -164,7 +163,7 @@ namespace SkillIssueToolkit.ActPlugin
 
                 if (rule.DelaySeconds > 0)
                 {
-                    _log?.Invoke("TriggerEngine: '" + rule.Name + "' matched - delaying " + rule.DelaySeconds + "s");
+                    _log?.Invoke("NotificationEngine: '" + rule.Name + "' matched - delaying " + rule.DelaySeconds + "s");
                     _ = FireDelayedAsync(rule, match, rule.DelaySeconds);
                 }
                 else
@@ -174,7 +173,7 @@ namespace SkillIssueToolkit.ActPlugin
             }
         }
 
-        private bool PassesPlayerMatchCheck(TriggerRule rule, Match match)
+        private bool PassesPlayerMatchCheck(NotificationRule rule, Match match)
         {
             if (string.IsNullOrEmpty(rule.RequirePlayerMatch)) return true;
 
@@ -182,7 +181,7 @@ namespace SkillIssueToolkit.ActPlugin
             return group.Success && string.Equals(group.Value, ActGlobals.charName, StringComparison.OrdinalIgnoreCase);
         }
 
-        private bool IsOnCooldown(TriggerRule rule)
+        private bool IsOnCooldown(NotificationRule rule)
         {
             if (rule.SuppressSeconds <= 0) return false;
 
@@ -193,7 +192,7 @@ namespace SkillIssueToolkit.ActPlugin
             }
         }
 
-        private void MarkFired(TriggerRule rule)
+        private void MarkFired(NotificationRule rule)
         {
             if (rule.SuppressSeconds <= 0) return;
 
@@ -205,62 +204,42 @@ namespace SkillIssueToolkit.ActPlugin
 
         // Keyed by Source+Name so a default rule and a custom rule sharing a Name track
         // cooldowns independently instead of colliding.
-        private static string CooldownKey(TriggerRule rule) => TriggerSettings.MakeKey(rule.Source, rule.Name);
+        private static string CooldownKey(NotificationRule rule) => NotificationSettings.MakeKey(rule.Source, rule.Name);
 
-        private async Task FireDelayedAsync(TriggerRule rule, Match match, double delaySeconds)
+        private async Task FireDelayedAsync(NotificationRule rule, Match match, double delaySeconds)
         {
             await Task.Delay(TimeSpan.FromSeconds(delaySeconds));
             FireNow(rule, match); // fires regardless of whatever's changed in the meantime - no cancellation
         }
 
-        // Fires whatever this rule actually has configured - a text alert, a timer, both, or
-        // nothing if neither field is set.
-        private void FireNow(TriggerRule rule, Match match)
+        // Fires the rule's text alert, if it has one configured.
+        private void FireNow(NotificationRule rule, Match match)
         {
-            if (!string.IsNullOrEmpty(rule.DisplayText))
+            if (string.IsNullOrEmpty(rule.DisplayText)) return;
+
+            var severity = !string.IsNullOrEmpty(rule.Severity) && SeverityNormalization.TryGetValue(rule.Severity, out var normalized)
+                ? normalized
+                : "Alert"; // typo'd or missing severity falls back to the middle tier
+            var displayText = InterpolateCaptureGroups(rule.DisplayText, match);
+
+            _log?.Invoke("NotificationEngine: '" + rule.Name + "' fired - raw Severity in rules file: "
+                + (rule.Severity ?? "(null/missing)") + ", resolved to: " + severity);
+
+            _server.Broadcast("notificationFired", new NotificationFiredEvent
             {
-                var severity = !string.IsNullOrEmpty(rule.Severity) && SeverityNormalization.TryGetValue(rule.Severity, out var normalized)
-                    ? normalized
-                    : "Alert"; // typo'd or missing severity falls back to the middle tier
-                var displayText = InterpolateCaptureGroups(rule.DisplayText, match);
-
-                _log?.Invoke("TriggerEngine: '" + rule.Name + "' fired - raw Severity in rules file: "
-                    + (rule.Severity ?? "(null/missing)") + ", resolved to: " + severity);
-
-                _server.Broadcast("triggerFired", new TriggerFiredEvent
-                {
-                    RuleName = rule.Name,
-                    DisplayText = displayText,
-                    Severity = severity,
-                    FiredAt = DateTime.Now
-                });
-            }
-
-            if (rule.TimerDurationSeconds > 0)
-            {
-                var label = InterpolateCaptureGroups(rule.TimerLabel ?? rule.Name, match);
-
-                _log?.Invoke("TriggerEngine: '" + rule.Name + "' started a " + rule.TimerDurationSeconds + "s timer");
-
-                _server.Broadcast("timerStarted", new TimerStartedEvent
-                {
-                    InstanceId = Guid.NewGuid().ToString(),
-                    RuleName = rule.Name,
-                    Label = label,
-                    Color = rule.TimerColor,
-                    DurationSeconds = rule.TimerDurationSeconds,
-                    OverdueLingerSeconds = rule.TimerOverdueLingerSeconds,
-                    StartedAt = DateTime.Now
-                });
-            }
+                RuleName = rule.Name,
+                DisplayText = displayText,
+                Severity = severity,
+                FiredAt = DateTime.Now
+            });
         }
 
         private static readonly Regex PlaceholderPattern = new Regex(@"\{(\w+)\}", RegexOptions.Compiled);
 
-        // Lets DisplayText/TimerLabel reference a named capture group from the rule's own
-        // Pattern, e.g. pattern "^You have been slain by (?<who>.+)\." with text
-        // "Killed by {who}!". An unrecognized {placeholder} is left as-is rather than
-        // dropped, so a typo shows up instead of silently disappearing.
+        // Lets DisplayText reference a named capture group from the rule's own Pattern, e.g.
+        // pattern "^You have been slain by (?<who>.+)\." with text "Killed by {who}!". An
+        // unrecognized {placeholder} is left as-is rather than dropped, so a typo shows up
+        // instead of silently disappearing.
         private static string InterpolateCaptureGroups(string displayText, Match match)
         {
             if (displayText == null) return match.Value;
@@ -273,14 +252,14 @@ namespace SkillIssueToolkit.ActPlugin
             });
         }
 
-        public static List<TriggerRule> LoadRules(string path)
+        public static List<NotificationRule> LoadRules(string path)
         {
             try
             {
                 if (File.Exists(path))
                 {
                     var json = File.ReadAllText(path);
-                    return JsonConvert.DeserializeObject<List<TriggerRule>>(json) ?? new List<TriggerRule>();
+                    return JsonConvert.DeserializeObject<List<NotificationRule>>(json) ?? new List<NotificationRule>();
                 }
             }
             catch
@@ -288,7 +267,7 @@ namespace SkillIssueToolkit.ActPlugin
                 // corrupt or unreadable - start with an empty rule set instead of failing plugin init
             }
 
-            return new List<TriggerRule>();
+            return new List<NotificationRule>();
         }
     }
 }

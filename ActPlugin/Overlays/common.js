@@ -1,7 +1,7 @@
 // Shared across all overlay pages.
 
 // Connects to the plugin's WebSocket and routes each message to the right handler by type.
-// handlers is e.g. { encounterSnapshot: render } or { triggerFired: addToast } - a page only
+// handlers is e.g. { encounterSnapshot: render } or { notificationFired: addToast } - a page only
 // supplies handlers for the message types it cares about; anything else that arrives (other
 // overlays share this same connection) is silently ignored.
 function connectOverlay(handlers) {

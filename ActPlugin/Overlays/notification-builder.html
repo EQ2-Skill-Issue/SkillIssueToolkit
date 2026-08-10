@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>EQ2 Notification Builder</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700&family=Roboto+Condensed:wght@400;600;700&display=swap" rel="stylesheet">
+    <link href="common.css" rel="stylesheet">
+    <style>
+        /* Not an in-game overlay - a plain browser tab, same reasoning as test.html: you're
+        reading a live-scrolling list and filling out a form, not something meant to sit over
+        the game window. */
+        html, body {
+            overflow: visible;
+        }
+
+        #panel {
+            width: 820px;
+            display: flex;
+            gap: 14px;
+            background: linear-gradient(180deg, rgba(26,20,15,0.94), rgba(20,15,11,0.94));
+            border: 1px solid var(--brass);
+            border-radius: 6px;
+            padding: 14px;
+        }
+
+        .column {
+            flex: 1 1 0;
+            min-width: 0;
+        }
+
+        h1 {
+            font-family: "Cinzel", Georgia, serif;
+            font-size: 15px;
+            color: var(--brass);
+            margin: 0 0 4px;
+        }
+
+        p.hint {
+            font-size: 11px;
+            color: var(--parchment-dim);
+            margin: 0 0 10px;
+        }
+
+        button {
+            background: var(--brass);
+            color: var(--ink);
+            border: none;
+            border-radius: 4px;
+            padding: 7px 14px;
+            font-family: "Roboto Condensed", sans-serif;
+            font-weight: 700;
+            font-size: 12px;
+            cursor: pointer;
+        }
+
+            button:hover {
+                background: #ddb15a;
+            }
+
+            button:disabled {
+                background: var(--shadow);
+                color: var(--parchment-dim);
+                cursor: default;
+            }
+
+            button.secondary {
+                background: transparent;
+                border: 1px solid var(--shadow);
+                color: var(--parchment);
+                font-weight: 400;
+            }
+
+                button.secondary:hover {
+                    border-color: var(--brass);
+                    background: rgba(0,0,0,0.2);
+                }
+
+        #captureRow {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+
+        #captureState {
+            font-size: 11px;
+            color: var(--parchment-dim);
+        }
+
+            #captureState.active {
+                color: var(--verdigris);
+            }
+
+        #lineList {
+            height: 360px;
+            overflow-y: auto;
+            border: 1px solid var(--shadow);
+            border-radius: 4px;
+            background: rgba(0,0,0,0.25);
+        }
+
+        .logLine {
+            padding: 6px 8px;
+            font-family: "Roboto Condensed", monospace;
+            font-size: 11px;
+            border-bottom: 1px solid rgba(58,47,34,0.6);
+            cursor: pointer;
+            word-break: break-word;
+        }
+
+            .logLine:hover {
+                background: rgba(201,154,60,0.15);
+            }
+
+            .logLine.selected {
+                background: rgba(201,154,60,0.28);
+            }
+
+            .logLine .ts {
+                color: var(--parchment-dim);
+                margin-right: 6px;
+            }
+
+        #emptyHint {
+            padding: 12px;
+            font-size: 11px;
+            color: var(--parchment-dim);
+        }
+
+        label {
+            display: block;
+            font-size: 11px;
+            color: var(--parchment-dim);
+            margin: 8px 0 3px;
+        }
+
+        input[type="text"], input[type="number"], textarea {
+            width: 100%;
+            background: rgba(0,0,0,0.35);
+            border: 1px solid var(--shadow);
+            border-radius: 4px;
+            color: var(--parchment);
+            font-family: "Roboto Condensed", monospace;
+            font-size: 12px;
+            padding: 6px 8px;
+            box-sizing: border-box;
+        }
+
+        textarea {
+            height: 44px;
+            resize: vertical;
+        }
+
+        select {
+            width: 100%;
+            background: rgba(0,0,0,0.35);
+            border: 1px solid var(--shadow);
+            border-radius: 4px;
+            color: var(--parchment);
+            font-family: "Roboto Condensed", sans-serif;
+            font-size: 12px;
+            padding: 6px 8px;
+        }
+
+        .fieldRow {
+            display: flex;
+            gap: 8px;
+        }
+
+            .fieldRow > div {
+                flex: 1 1 0;
+            }
+
+        #status {
+            margin-top: 10px;
+            font-size: 12px;
+            color: var(--parchment-dim);
+            min-height: 16px;
+        }
+
+            #status.ok {
+                color: var(--verdigris);
+            }
+
+            #status.error {
+                color: var(--rust);
+            }
+
+        #saveButton {
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div id="panel">
+        <div class="column">
+            <h1>Captured Lines</h1>
+            <p class="hint">
+                Start capture, then get hit by (or trigger) whatever you're chasing in-game.
+                Every raw log line comes in live below while capture is on - click one to
+                prefill a suggested regex on the right, then tweak it and save straight into
+                your custom notifications file.
+            </p>
+            <div id="captureRow">
+                <button id="toggleCaptureButton">Start Capture</button>
+                <button id="clearListButton" class="secondary">Clear List</button>
+                <span id="captureState">capture is off</span>
+            </div>
+            <div id="lineList">
+                <div id="emptyHint">No lines captured yet - start capture above, then act in-game.</div>
+            </div>
+        </div>
+        <div class="column">
+            <h1>New Notification</h1>
+            <p class="hint">
+                Suggested pattern is a rough starting point - refine it before saving. Countdown
+                timers are no longer authored here - configure those directly in ACT's own
+                Spell Timers (Options -> Spell Timers); they show up automatically in timers.html.
+            </p>
+
+            <label for="nameInput">Name</label>
+            <input type="text" id="nameInput" placeholder="MyNewNotification">
+
+            <label for="patternInput">Pattern (regex)</label>
+            <textarea id="patternInput" placeholder="Click a captured line to suggest one"></textarea>
+
+            <label for="displayTextInput">Display Text</label>
+            <input type="text" id="displayTextInput" placeholder="Incoming! Watch out">
+
+            <div class="fieldRow">
+                <div>
+                    <label for="severityInput">Severity</label>
+                    <select id="severityInput">
+                        <option value="Alert">Alert</option>
+                        <option value="Alarm">Alarm</option>
+                        <option value="Info">Info</option>
+                    </select>
+                </div>
+            </div>
+
+            <label for="zoneInput">Zone (optional - blank = always active)</label>
+            <input type="text" id="zoneInput" placeholder="Loping Plains">
+
+            <button id="saveButton">Save Custom Notification</button>
+            <div id="status"></div>
+        </div>
+    </div>
+    <script src="common.js"></script>
+    <script>
+        const lineListEl = document.getElementById('lineList');
+        const emptyHintEl = document.getElementById('emptyHint');
+        const toggleCaptureButton = document.getElementById('toggleCaptureButton');
+        const clearListButton = document.getElementById('clearListButton');
+        const captureStateEl = document.getElementById('captureState');
+        const nameInput = document.getElementById('nameInput');
+        const patternInput = document.getElementById('patternInput');
+        const displayTextInput = document.getElementById('displayTextInput');
+        const severityInput = document.getElementById('severityInput');
+        const zoneInput = document.getElementById('zoneInput');
+        const saveButton = document.getElementById('saveButton');
+        const statusEl = document.getElementById('status');
+
+        let isCapturing = false;
+        let selectedLineEl = null;
+
+        function setCaptureUi(capturing) {
+            isCapturing = capturing;
+            toggleCaptureButton.textContent = capturing ? 'Stop Capture' : 'Start Capture';
+            captureStateEl.textContent = capturing ? 'capture is on - lines will appear below' : 'capture is off';
+            captureStateEl.className = capturing ? 'active' : '';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function addLine(text, capturedAt) {
+            if (emptyHintEl) emptyHintEl.remove();
+
+            const el = document.createElement('div');
+            el.className = 'logLine';
+            const ts = new Date(capturedAt);
+            const tsText = isNaN(ts.getTime()) ? '' : ts.toLocaleTimeString();
+            el.innerHTML = '<span class="ts">' + tsText + '</span>' + escapeHtml(text);
+            el.dataset.rawText = text;
+            el.addEventListener('click', () => selectLine(el));
+            lineListEl.appendChild(el);
+            lineListEl.scrollTop = lineListEl.scrollHeight;
+        }
+
+        // EQ2 log lines are prefixed with "(n)[Day Mon dd hh:mm:ss yyyy] " - that's ACT's own
+        // line-count/timestamp bookkeeping, never part of the actual game text, so a rule
+        // that matched it verbatim would only ever fire on that one exact date/time again.
+        // Stripped before pattern generation, not matched against at all.
+        const LogLinePrefixPattern = /^\(\d+\)\[[^\]]*\]\s*/;
+
+        // Heuristic only - strips the ACT line prefix, escapes regex metacharacters in what's
+        // left, then loosens the parts most likely to vary between occurrences (numbers, and
+        // a guessed "name" token right before a common verb) so the pattern isn't just the
+        // literal line back again.
+        function suggestPattern(rawLine) {
+            const withoutPrefix = rawLine.replace(LogLinePrefixPattern, '');
+            const escaped = withoutPrefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            let pattern = escaped.replace(/\d+/g, '\\d+');
+            pattern = pattern.replace(/^(\\?\w[\w\s]*?)\s+(hits|slashes|pierces|crushes|casts|has been|is afflicted|resists)/i,
+                '(?<name>.+?) $2');
+            return '^' + pattern + '$';
+        }
+
+        function selectLine(el) {
+            if (selectedLineEl) selectedLineEl.classList.remove('selected');
+            selectedLineEl = el;
+            el.classList.add('selected');
+            patternInput.value = suggestPattern(el.dataset.rawText);
+        }
+
+        connectOverlay({
+            captureStateChanged: (data) => setCaptureUi(!!data.isCapturing),
+            logLineCaptured: (data) => addLine(data.text, data.capturedAt)
+        });
+
+        toggleCaptureButton.addEventListener('click', async () => {
+            statusEl.className = '';
+            statusEl.textContent = '';
+            try {
+                const res = await fetch('/toggle-capture', { method: 'POST' });
+                if (!res.ok) {
+                    statusEl.className = 'error';
+                    statusEl.textContent = 'Server returned an error (status ' + res.status + ').';
+                }
+                // Actual on/off state is confirmed via the captureStateChanged broadcast above,
+                // not assumed here - keeps this page in sync even if another window toggled it.
+            } catch (err) {
+                statusEl.className = 'error';
+                statusEl.textContent = 'Failed to reach the plugin - is it running? (' + err + ')';
+            }
+        });
+
+        clearListButton.addEventListener('click', () => {
+            lineListEl.innerHTML = '';
+            lineListEl.appendChild(emptyHintEl);
+        });
+
+        saveButton.addEventListener('click', async () => {
+            const name = nameInput.value.trim();
+            const pattern = patternInput.value.trim();
+            if (!name || !pattern) {
+                statusEl.className = 'error';
+                statusEl.textContent = 'Name and Pattern are both required.';
+                return;
+            }
+
+            const rule = {
+                Name: name,
+                Pattern: pattern,
+                DisplayText: displayTextInput.value.trim() || null,
+                Severity: severityInput.value,
+                Zone: zoneInput.value.trim() || null
+            };
+
+            statusEl.className = '';
+            statusEl.textContent = 'Saving...';
+            saveButton.disabled = true;
+            try {
+                const res = await fetch('/save-notification', {
+                    method: 'POST',
+                    body: JSON.stringify(rule)
+                });
+                if (res.ok) {
+                    statusEl.className = 'ok';
+                    statusEl.textContent = 'Saved "' + name + '" to custom notifications and reloaded the engine.';
+                } else {
+                    statusEl.className = 'error';
+                    statusEl.textContent = 'Server rejected the notification (status ' + res.status + ') - check Name/Pattern.';
+                }
+            } catch (err) {
+                statusEl.className = 'error';
+                statusEl.textContent = 'Failed to reach the plugin - is it running? (' + err + ')';
+            } finally {
+                saveButton.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

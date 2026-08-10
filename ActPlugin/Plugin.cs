@@ -23,6 +23,15 @@ namespace SkillIssueToolkit.ActPlugin
         // encounter, so each tick adds only the delta.
         private string _lastSeenZone;
         private DateTime _zoneStartTime = DateTime.Now;
+
+        // AfterCombatAction fires synchronously on ACT's own dispatch thread and can be raised
+        // dozens of times a second during raid combat (one per swing/heal/tick, per raid
+        // member). Rebuilding the full combatant snapshot + serializing + broadcasting on every
+        // single one of those was blocking ACT and causing it to fall behind. The zonewide
+        // totals are accumulated as deltas (see _encounterContributed below), so skipping ticks
+        // here is lossless - whatever was missed just gets folded in on the next processed tick.
+        private const int MinBroadcastIntervalMs = 200;
+        private DateTime _lastBroadcastAt = DateTime.MinValue;
         private readonly Dictionary<string, RunningTotals> _zonewideTotals = new Dictionary<string, RunningTotals>();
         private readonly Dictionary<string, RunningTotals> _encounterContributed = new Dictionary<string, RunningTotals>();
 
@@ -39,8 +48,11 @@ namespace SkillIssueToolkit.ActPlugin
         private PluginSettings _settings;
         private CensusClassLookup _censusLookup;
         private bool _hasLoggedGroupDiagnostic;
-        private TriggerEngine _triggerEngine;
-        private TriggerSettings _triggerSettings;
+        private NotificationEngine _notificationEngine;
+        private NotificationSettings _notificationSettings;
+        private AlarmTimerBridge _alarmTimerBridge;
+        private LogLineCapture _logLineCapture;
+        private Button _captureToggleButton;
         private string _pluginDir;
         private string _overlaysRoot;
         private Label _urlLabel;
@@ -67,12 +79,16 @@ namespace SkillIssueToolkit.ActPlugin
             Log("InitPlugin starting");
 
             _settings = PluginSettings.Load(pluginDir);
-            _triggerSettings = TriggerSettings.Load(pluginDir);
+            _notificationSettings = NotificationSettings.Load(pluginDir);
             BuildSettingsUi(pluginScreenSpace, pluginDir);
 
             StartServer(_settings.Port);
+            _logLineCapture = new LogLineCapture(_server, Log);
+            _server.OnSaveNotification = rule => AppendCustomNotificationAndReload(rule, pluginDir);
+            _server.OnToggleCapture = ToggleLineCapture;
             LaunchOverlayHostIfNotRunning(pluginDir);
-            _ = StartTriggerEngineAsync(pluginDir);
+            _ = StartNotificationEngineAsync(pluginDir);
+            _alarmTimerBridge = new AlarmTimerBridge(_server, Log);
             _ = CheckForUpdateAsync();
 
             ActGlobals.oFormActMain.AfterCombatAction += OnAfterCombatAction;
@@ -136,22 +152,74 @@ namespace SkillIssueToolkit.ActPlugin
             }
         }
 
-        // Refreshes the cached default triggers from the remote URL (if enabled), then loads
-        // and merges default + custom rules and (re)starts the engine on the result. Awaited
-        // fire-and-forget from InitPlugin/the Reload button - never blocks plugin startup on
-        // network access, since LoadAll falls back to whatever's already cached on disk.
-        private async System.Threading.Tasks.Task StartTriggerEngineAsync(string pluginDir)
+        // Refreshes the cached default notifications from the remote URL (if enabled), then
+        // loads and merges default + custom rules and (re)starts the engine on the result.
+        // Awaited fire-and-forget from InitPlugin/the Reload button - never blocks plugin
+        // startup on network access, since LoadAll falls back to whatever's already cached on
+        // disk.
+        private async System.Threading.Tasks.Task StartNotificationEngineAsync(string pluginDir)
         {
-            if (_triggerSettings.AutoUpdateDefaultTriggers)
+            if (_notificationSettings.AutoUpdateDefaultNotifications)
             {
-                await TriggerSourceManager.RefreshDefaultRulesAsync(pluginDir, _triggerSettings, Log);
+                await NotificationSourceManager.RefreshDefaultRulesAsync(pluginDir, _notificationSettings, Log);
             }
 
-            var rules = TriggerSourceManager.LoadAll(pluginDir, _triggerSettings, Log);
-            _triggerEngine?.Unsubscribe();
-            _triggerEngine = new TriggerEngine(_server, rules, Log);
-            _server.OnTestLine = _triggerEngine.EvaluateLine;
-            Log("TriggerEngine started with " + rules.Count + " rule(s)");
+            var rules = NotificationSourceManager.LoadAll(pluginDir, _notificationSettings, Log);
+            _notificationEngine?.Unsubscribe();
+            _notificationEngine = new NotificationEngine(_server, rules, Log);
+            _server.OnTestLine = _notificationEngine.EvaluateLine;
+            Log("NotificationEngine started with " + rules.Count + " rule(s)");
+        }
+
+        // Shared by the settings-tab button and OverlayServer.OnToggleCapture (from
+        // notification-builder.html), so either place can flip capture on/off and both stay in
+        // sync - the button's own label is also refreshed here since captureStateChanged
+        // isn't observed by WinForms, only by the overlay pages over the websocket.
+        private void ToggleLineCapture()
+        {
+            if (_logLineCapture == null) return;
+
+            if (_logLineCapture.IsCapturing)
+            {
+                _logLineCapture.Stop();
+            }
+            else
+            {
+                _logLineCapture.Start();
+            }
+
+            if (_captureToggleButton != null)
+            {
+                _captureToggleButton.Text = _logLineCapture.IsCapturing ? "Stop Line Capture" : "Start Line Capture";
+            }
+        }
+
+        // Wired to OverlayServer.OnSaveNotification - appends a rule posted from
+        // notification-builder.html to the custom rules file (never touches the default file)
+        // and immediately reloads the engine so it's live without a manual "Reload From Disk".
+        private void AppendCustomNotificationAndReload(NotificationRule rule, string pluginDir)
+        {
+            try
+            {
+                var path = NotificationSourceManager.CustomRulesPath(pluginDir);
+                var existing = File.Exists(path)
+                    ? Newtonsoft.Json.JsonConvert.DeserializeObject<List<NotificationRule>>(File.ReadAllText(path)) ?? new List<NotificationRule>()
+                    : new List<NotificationRule>();
+
+                existing.Add(rule);
+                File.WriteAllText(path, Newtonsoft.Json.JsonConvert.SerializeObject(existing, Newtonsoft.Json.Formatting.Indented));
+                Log("AppendCustomNotificationAndReload: saved new custom notification '" + rule.Name + "'");
+
+                _notificationEngine?.Unsubscribe();
+                var rules = NotificationSourceManager.LoadAll(pluginDir, _notificationSettings, Log);
+                _notificationEngine = new NotificationEngine(_server, rules, Log);
+                _server.OnTestLine = _notificationEngine.EvaluateLine;
+                RefreshNotificationListUi(pluginDir);
+            }
+            catch (Exception ex)
+            {
+                Log("AppendCustomNotificationAndReload failed: " + ex);
+            }
         }
 
         // Skips launching if an instance is already running, so reloading the plugin doesn't
@@ -219,7 +287,7 @@ namespace SkillIssueToolkit.ActPlugin
         private static readonly (string Key, string DisplayName)[] KnownOverlays =
         {
             ("", "DPS Meter"),
-            ("triggers", "Triggers"),
+            ("notifications", "Notifications"),
             ("timers", "Timers"),
         };
 
@@ -535,7 +603,7 @@ namespace SkillIssueToolkit.ActPlugin
                 innerY += lineHeight;
 
                 // Shows placeholder content so the overlay can be positioned even when empty
-                // (mainly for Triggers/Timers, which are normally invisible when idle).
+                // (mainly for Notifications/Timers, which are normally invisible when idle).
                 var showPreviewCheckbox = new CheckBox
                 {
                     Text = "Show preview content (for positioning)",
@@ -558,51 +626,52 @@ namespace SkillIssueToolkit.ActPlugin
                 y += groupBox.Height + 10;
             }
 
-            // No in-UI rule editor for custom triggers yet - edit eq2overlay-triggers.custom.json
-            // directly, then hit Reload. Default triggers are fetched from GitHub and cached
-            // to eq2overlay-triggers.default.json - not meant to be hand-edited.
-            var triggersLabel = new Label
+            // No in-UI rule editor for custom notifications yet - edit
+            // eq2overlay-notifications.custom.json directly, then hit Reload. Default
+            // notifications are fetched from GitHub and cached to
+            // eq2overlay-notifications.default.json - not meant to be hand-edited.
+            var notificationsLabel = new Label
             {
-                Text = "Triggers: default triggers auto-update from GitHub; add your own in the custom file:",
+                Text = "Notifications: default notifications auto-update from GitHub; add your own in the custom file:",
                 Location = new System.Drawing.Point(10, y),
                 AutoSize = true
             };
-            tab.Controls.Add(triggersLabel);
+            tab.Controls.Add(notificationsLabel);
             y += lineHeight - 2;
 
-            var openCustomTriggersFileButton = new Button { Text = "Open Custom Triggers File", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
-            openCustomTriggersFileButton.Click += (s, e) =>
+            var openCustomNotificationsFileButton = new Button { Text = "Open Custom Notifications File", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
+            openCustomNotificationsFileButton.Click += (s, e) =>
             {
                 try
                 {
-                    var path = TriggerSourceManager.CustomRulesPath(pluginDir);
+                    var path = NotificationSourceManager.CustomRulesPath(pluginDir);
                     if (!File.Exists(path)) File.WriteAllText(path, "[]");
                     Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
                 }
                 catch (Exception ex)
                 {
-                    Log("Failed to open custom triggers file: " + ex);
+                    Log("Failed to open custom notifications file: " + ex);
                 }
             };
 
-            var checkForTriggerUpdatesButton = new Button { Text = "Check for Trigger Updates", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
-            checkForTriggerUpdatesButton.Click += (s, e) =>
+            var checkForNotificationUpdatesButton = new Button { Text = "Check for Notification Updates", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
+            checkForNotificationUpdatesButton.Click += (s, e) =>
             {
-                _ = StartTriggerEngineAsync(pluginDir);
+                _ = StartNotificationEngineAsync(pluginDir);
             };
 
-            var reloadTriggersButton = new Button { Text = "Reload From Disk", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
-            reloadTriggersButton.Click += (s, e) =>
+            var reloadNotificationsButton = new Button { Text = "Reload From Disk", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
+            reloadNotificationsButton.Click += (s, e) =>
             {
-                _triggerEngine?.Unsubscribe();
-                var rules = TriggerSourceManager.LoadAll(pluginDir, _triggerSettings, Log);
-                _triggerEngine = new TriggerEngine(_server, rules, Log);
-                _server.OnTestLine = _triggerEngine.EvaluateLine;
-                Log("TriggerEngine reloaded with " + rules.Count + " rule(s)");
-                RefreshTriggerListUi(pluginDir);
+                _notificationEngine?.Unsubscribe();
+                var rules = NotificationSourceManager.LoadAll(pluginDir, _notificationSettings, Log);
+                _notificationEngine = new NotificationEngine(_server, rules, Log);
+                _server.OnTestLine = _notificationEngine.EvaluateLine;
+                Log("NotificationEngine reloaded with " + rules.Count + " rule(s)");
+                RefreshNotificationListUi(pluginDir);
             };
 
-            var openTestPageButton = new Button { Text = "Open Trigger Tester", AutoSize = true };
+            var openTestPageButton = new Button { Text = "Open Notification Tester", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
             openTestPageButton.Click += (s, e) =>
             {
                 try
@@ -611,11 +680,30 @@ namespace SkillIssueToolkit.ActPlugin
                 }
                 catch (Exception ex)
                 {
-                    Log("Failed to open trigger tester: " + ex);
+                    Log("Failed to open notification tester: " + ex);
                 }
             };
 
-            var triggersButtonRow = new FlowLayoutPanel
+            // Capture is opt-in and off by default - flip it on right before getting hit by
+            // whatever you don't have a notification for yet, then open the builder to pick the
+            // line out of the list instead of digging through ACT or the raw log by hand.
+            _captureToggleButton = new Button { Text = "Start Line Capture", AutoSize = true, Margin = new Padding(0, 0, 8, 0) };
+            _captureToggleButton.Click += (s, e) => ToggleLineCapture();
+
+            var openNotificationBuilderButton = new Button { Text = "Open Notification Builder", AutoSize = true };
+            openNotificationBuilderButton.Click += (s, e) =>
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo("http://localhost:" + _settings.Port + "/notification-builder.html") { UseShellExecute = true });
+                }
+                catch (Exception ex)
+                {
+                    Log("Failed to open notification builder: " + ex);
+                }
+            };
+
+            var notificationsButtonRow = new FlowLayoutPanel
             {
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = false,
@@ -623,38 +711,40 @@ namespace SkillIssueToolkit.ActPlugin
                 Location = new System.Drawing.Point(10, y),
                 Margin = new Padding(0)
             };
-            triggersButtonRow.Controls.Add(openCustomTriggersFileButton);
-            triggersButtonRow.Controls.Add(checkForTriggerUpdatesButton);
-            triggersButtonRow.Controls.Add(reloadTriggersButton);
-            triggersButtonRow.Controls.Add(openTestPageButton);
-            tab.Controls.Add(triggersButtonRow);
+            notificationsButtonRow.Controls.Add(openCustomNotificationsFileButton);
+            notificationsButtonRow.Controls.Add(checkForNotificationUpdatesButton);
+            notificationsButtonRow.Controls.Add(reloadNotificationsButton);
+            notificationsButtonRow.Controls.Add(openTestPageButton);
+            notificationsButtonRow.Controls.Add(_captureToggleButton);
+            notificationsButtonRow.Controls.Add(openNotificationBuilderButton);
+            tab.Controls.Add(notificationsButtonRow);
             y += lineHeight + 12;
 
             var autoUpdateCheckbox = new CheckBox
             {
-                Text = "Auto-update default triggers on startup/reload",
+                Text = "Auto-update default notifications on startup/reload",
                 Location = new System.Drawing.Point(10, y),
                 AutoSize = true,
-                Checked = _triggerSettings.AutoUpdateDefaultTriggers
+                Checked = _notificationSettings.AutoUpdateDefaultNotifications
             };
             autoUpdateCheckbox.CheckedChanged += (s, e) =>
             {
-                _triggerSettings.AutoUpdateDefaultTriggers = autoUpdateCheckbox.Checked;
-                _triggerSettings.Save(pluginDir);
+                _notificationSettings.AutoUpdateDefaultNotifications = autoUpdateCheckbox.Checked;
+                _notificationSettings.Save(pluginDir);
             };
             tab.Controls.Add(autoUpdateCheckbox);
             y += lineHeight + 8;
 
-            var triggerListLabel = new Label
+            var notificationListLabel = new Label
             {
-                Text = "Individual triggers (uncheck to disable, regardless of source):",
+                Text = "Individual notifications (uncheck to disable, regardless of source):",
                 Location = new System.Drawing.Point(10, y),
                 AutoSize = true
             };
-            tab.Controls.Add(triggerListLabel);
+            tab.Controls.Add(notificationListLabel);
             y += lineHeight - 2;
 
-            _triggerListPanel = new FlowLayoutPanel
+            _notificationListPanel = new FlowLayoutPanel
             {
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
@@ -665,43 +755,43 @@ namespace SkillIssueToolkit.ActPlugin
                 Location = new System.Drawing.Point(10, y),
                 BorderStyle = BorderStyle.FixedSingle
             };
-            tab.Controls.Add(_triggerListPanel);
-            RefreshTriggerListUi(pluginDir);
+            tab.Controls.Add(_notificationListPanel);
+            RefreshNotificationListUi(pluginDir);
         }
 
-        private FlowLayoutPanel _triggerListPanel;
+        private FlowLayoutPanel _notificationListPanel;
 
-        // Rebuilds the per-rule checkbox list from both trigger files (including anything
+        // Rebuilds the per-rule checkbox list from both notification files (including anything
         // currently disabled) - called after any reload/refresh so it reflects what's
         // actually on disk right now, not a stale snapshot from settings-UI construction time.
-        private void RefreshTriggerListUi(string pluginDir)
+        private void RefreshNotificationListUi(string pluginDir)
         {
-            if (_triggerListPanel == null) return;
+            if (_notificationListPanel == null) return;
 
-            _triggerListPanel.Controls.Clear();
+            _notificationListPanel.Controls.Clear();
 
-            var allRules = TriggerSourceManager.LoadAllIncludingDisabled(pluginDir, Log);
+            var allRules = NotificationSourceManager.LoadAllIncludingDisabled(pluginDir, Log);
             foreach (var rule in allRules.OrderBy(r => r.Source).ThenBy(r => r.Name))
             {
                 var checkbox = new CheckBox
                 {
                     Text = "[" + rule.Source + "] " + rule.Name,
                     AutoSize = true,
-                    Checked = !_triggerSettings.IsDisabled(rule.Source, rule.Name)
+                    Checked = !_notificationSettings.IsDisabled(rule.Source, rule.Name)
                 };
                 var source = rule.Source;
                 var name = rule.Name;
                 checkbox.CheckedChanged += (s, e) =>
                 {
-                    _triggerSettings.SetDisabled(source, name, !checkbox.Checked);
-                    _triggerSettings.Save(pluginDir);
-                    _triggerEngine?.Unsubscribe();
-                    var rules = TriggerSourceManager.LoadAll(pluginDir, _triggerSettings, Log);
-                    _triggerEngine = new TriggerEngine(_server, rules, Log);
-                    _server.OnTestLine = _triggerEngine.EvaluateLine;
-                    Log((checkbox.Checked ? "Enabled" : "Disabled") + " trigger " + source + ":" + name + " via plugin settings UI");
+                    _notificationSettings.SetDisabled(source, name, !checkbox.Checked);
+                    _notificationSettings.Save(pluginDir);
+                    _notificationEngine?.Unsubscribe();
+                    var rules = NotificationSourceManager.LoadAll(pluginDir, _notificationSettings, Log);
+                    _notificationEngine = new NotificationEngine(_server, rules, Log);
+                    _server.OnTestLine = _notificationEngine.EvaluateLine;
+                    Log((checkbox.Checked ? "Enabled" : "Disabled") + " notification " + source + ":" + name + " via plugin settings UI");
                 };
-                _triggerListPanel.Controls.Add(checkbox);
+                _notificationListPanel.Controls.Add(checkbox);
             }
         }
 
@@ -715,7 +805,7 @@ namespace SkillIssueToolkit.ActPlugin
             // Re-wire on every (re)start, not just the first - StartServer() is also called
             // from the "Apply && Restart Server" button, which creates a brand new
             // OverlayServer instance that would otherwise have a null OnTestLine.
-            if (_triggerEngine != null) _server.OnTestLine = _triggerEngine.EvaluateLine;
+            if (_notificationEngine != null) _server.OnTestLine = _notificationEngine.EvaluateLine;
             _server.Start();
 
             var url = "http://localhost:" + port + "/";
@@ -736,7 +826,9 @@ namespace SkillIssueToolkit.ActPlugin
         {
             ActGlobals.oFormActMain.AfterCombatAction -= OnAfterCombatAction;
             ActGlobals.oFormActMain.OnCombatEnd -= OnCombatEnd;
-            _triggerEngine?.Unsubscribe();
+            _notificationEngine?.Unsubscribe();
+            _alarmTimerBridge?.Unsubscribe();
+            _logLineCapture?.Unsubscribe();
             _censusLookup?.Dispose();
             _server?.Stop();
             _statusLabel.Text = "EQ2 Overlay: stopped";
@@ -744,12 +836,14 @@ namespace SkillIssueToolkit.ActPlugin
         }
 
         // Gated on !isImport - a historical log import replaying old combat isn't a live
-        // fight ending, so clearing timer bars over that wouldn't mean anything.
+        // fight ending, so clearing timer bars over that wouldn't mean anything. Only clears
+        // this overlay's own rendered view - the underlying timers are ACT's own native Spell
+        // Timers and are unaffected.
         private void OnCombatEnd(bool isImport, CombatToggleEventArgs encounterInfo)
         {
             if (isImport) return;
 
-            _server?.Broadcast("clearTimers", new { });
+            _server?.Broadcast("clearAlarmTimers", new { });
             Log("Combat ended - cleared all timer bars");
         }
 
@@ -760,9 +854,19 @@ namespace SkillIssueToolkit.ActPlugin
                 var encounter = ActGlobals.oFormActMain.ActiveZone?.ActiveEncounter;
                 if (encounter == null)
                 {
-                    Log("AfterCombatAction fired but ActiveZone/ActiveEncounter is null");
                     return;
                 }
+
+                // Throttle: rebuilding/serializing/broadcasting a full snapshot on every raid
+                // member's every action would stall ACT's dispatch thread. Dropping ticks here
+                // is safe - _zonewideTotals accumulates via deltas against _encounterContributed,
+                // so a skipped tick's contribution is simply folded into the next one processed.
+                var now = DateTime.Now;
+                if ((now - _lastBroadcastAt).TotalMilliseconds < MinBroadcastIntervalMs)
+                {
+                    return;
+                }
+                _lastBroadcastAt = now;
 
                 if (!_hasLoggedGroupDiagnostic)
                 {
@@ -914,7 +1018,6 @@ namespace SkillIssueToolkit.ActPlugin
                 };
 
                 _server.Broadcast("encounterSnapshot", snapshot);
-                Log(string.Format("Broadcast OK - {0} allies, totalDamage={1}", combatants.Length, totalDamage));
 
                 // Zonewide combatant list comes from _zonewideTotals' own keys, not allyData -
                 // someone who stepped away mid-zone should still show their accumulated

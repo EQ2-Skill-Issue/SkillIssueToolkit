@@ -13,7 +13,7 @@ namespace SkillIssueToolkit.ActPlugin
     // position (see its CheckForExternalSettingsChanges).
     //
     // An empty/null key maps to the unkeyed "settings.json" path (the DPS overlay); a named
-    // key (e.g. "triggers") maps to that overlay's own file.
+    // key (e.g. "notifications") maps to that overlay's own file.
     public class OverlayHostSettings
     {
         public double Left { get; set; } = 40;
