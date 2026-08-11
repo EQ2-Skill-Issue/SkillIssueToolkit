@@ -11,7 +11,13 @@ namespace SkillIssueToolkit.ActPlugin
     // settings UI can show a "new version available" link.
     public static class UpdateChecker
     {
-        private const string LatestReleaseUrl = "https://api.github.com/repos/EQ2-Skill-Issue/SkillIssueToolkit/releases/latest";
+        // GitHub's own /releases/latest only ever returns the newest release with
+        // prerelease == false - if every published release is flagged prerelease, that
+        // endpoint 404s outright (documented GitHub behavior, not a bug in how it's called
+        // here). Using the plain list endpoint instead and picking the highest-versioned
+        // non-draft release ourselves works regardless of whether releases are marked as
+        // "Latest" on GitHub.
+        private const string ReleasesListUrl = "https://api.github.com/repos/EQ2-Skill-Issue/SkillIssueToolkit/releases";
 
         private static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromSeconds(8) };
 
@@ -56,34 +62,58 @@ namespace SkillIssueToolkit.ActPlugin
             return assembly.GetName().Version?.ToString() ?? "0.0.0";
         }
 
-        // Returns an UpdateResult if GitHub has a newer non-draft, non-prerelease release than
-        // the currently running version, or null if there's nothing newer (or nothing at all -
-        // e.g. no releases have been published yet, which GitHub reports as a 404).
+        // Returns an UpdateResult if GitHub has a newer non-draft release than the currently
+        // running version, or null if there's nothing newer (or nothing at all - e.g. no
+        // releases have been published yet, which GitHub reports as a 404). Prereleases are
+        // included in the comparison since this repo currently publishes every release as a
+        // prerelease - excluding them here would mean update checks never find anything.
         public static async Task<UpdateResult> CheckForUpdateAsync(Action<string> log)
         {
             try
             {
-                var response = await Http.GetAsync(LatestReleaseUrl);
+                var response = await Http.GetAsync(ReleasesListUrl);
                 if (!response.IsSuccessStatusCode)
                 {
                     // 404 is expected until the first GitHub release is published.
-                    log?.Invoke("UpdateChecker: latest release request returned " + (int)response.StatusCode + " - skipping update check");
+                    log?.Invoke("UpdateChecker: releases list request returned " + (int)response.StatusCode + " - skipping update check");
                     return null;
                 }
 
                 var json = await response.Content.ReadAsStringAsync();
-                var release = JsonConvert.DeserializeObject<GitHubRelease>(json);
-                if (release == null || release.Draft || release.Prerelease || string.IsNullOrWhiteSpace(release.TagName))
+                var releases = JsonConvert.DeserializeObject<GitHubRelease[]>(json);
+                if (releases == null || releases.Length == 0)
+                {
+                    return null;
+                }
+
+                GitHubRelease release = null;
+                Version releaseVersion = null;
+                foreach (var candidate in releases)
+                {
+                    if (candidate.Draft || string.IsNullOrWhiteSpace(candidate.TagName))
+                    {
+                        continue;
+                    }
+
+                    if (!TryParseCoreVersion(candidate.TagName.TrimStart('v', 'V'), out var candidateVersion))
+                    {
+                        continue;
+                    }
+
+                    if (release == null || candidateVersion > releaseVersion)
+                    {
+                        release = candidate;
+                        releaseVersion = candidateVersion;
+                    }
+                }
+
+                if (release == null)
                 {
                     return null;
                 }
 
                 var latestVersionText = release.TagName.TrimStart('v', 'V');
-                if (!TryParseCoreVersion(latestVersionText, out var latestVersion))
-                {
-                    log?.Invoke("UpdateChecker: could not parse release tag '" + release.TagName + "' as a version - skipping");
-                    return null;
-                }
+                var latestVersion = releaseVersion;
 
                 var currentVersionText = GetCurrentVersion();
                 if (!TryParseCoreVersion(currentVersionText, out var currentVersion))

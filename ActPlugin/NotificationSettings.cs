@@ -12,7 +12,7 @@ namespace SkillIssueToolkit.ActPlugin
     public class NotificationSettings
     {
         public string DefaultNotificationsUrl { get; set; } =
-            "https://raw.githubusercontent.com/EQ2-Skill-Issue/SkillIssueToolkit/main/SkillIssueToolkit.ActPlugin/eq2overlay-notifications.default.json";
+            "https://raw.githubusercontent.com/EQ2-Skill-Issue/SkillIssueToolkit/refs/heads/main/ActPlugin/eq2overlay-notifications.default.json";
 
         public bool AutoUpdateDefaultNotifications { get; set; } = true;
 

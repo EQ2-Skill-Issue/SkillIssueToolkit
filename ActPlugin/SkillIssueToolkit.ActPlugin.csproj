@@ -9,7 +9,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>SkillIssueToolkit.ActPlugin</AssemblyName>
     <RootNamespace>SkillIssueToolkit.ActPlugin</RootNamespace>
-    <Version>1.0.0-beta.3</Version>
+    <Version>1.0.0-beta.4</Version>
   </PropertyGroup>
 
   <ItemGroup>
