@@ -14,18 +14,19 @@ SkillIssueToolkit.Overlay.exe  →  one MainWindow per overlay page (see App.xam
 ## Multiple overlay windows
 
 `App.xaml.cs`'s `Overlays` array is the single source of truth for which pages get their
-own window - each entry is `(settingsKey, htmlFile, fallbackLeft, fallbackTop)`. Today
-that's the DPS meter (`dps-meter.html`, unkeyed settings file for backward compatibility)
-and notifications (`notifications.html`, `"notifications"` key, its own settings file).
-Adding another overlay page is one line in that array, not a new class.
+own window - each entry is `(settingsKey, htmlFile, fallbackLeft, fallbackTop, ...)`. Today
+that's the DPS meter (`dps-meter.html`, unkeyed settings file for backward compatibility),
+notifications (`notifications.html`, `"notifications"` key), and timer bars
+(`timers.html`, `"timers"` key, sourced from ACT's own native Spell Timers), each with its
+own settings file. Adding another overlay page is one line in that array, not a new class.
 
 ## Per-window settings
 
 Each window persists independently to `%AppData%\SkillIssueToolkit.Overlay\settings.json`
 (the DPS overlay, unkeyed) or `settings-{key}.json` (any other overlay, e.g.
-`settings-notifications.json`). The ACT plugin's own settings tab edits these same files
-directly and this app polls for external changes every ~300ms, so a change made in ACT
-takes effect within about a third of a second without restarting anything.
+`settings-notifications.json`, `settings-timers.json`). The ACT plugin's own settings tab
+edits these same files directly and this app polls for external changes every ~300ms, so a
+change made in ACT takes effect within about a third of a second without restarting anything.
 
 Per window, independently:
 

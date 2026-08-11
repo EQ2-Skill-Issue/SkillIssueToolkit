@@ -1,6 +1,6 @@
 # Skill Issue Toolkit
 
-A combat overlay, trigger/alert system, and countdown timers for EverQuest 2, built on
+A combat overlay and notification engine for EverQuest 2, built on
 [Advanced Combat Tracker (ACT)](https://advancedcombattracker.com/).
 
 ![Overview](.github/overview.png)
@@ -10,23 +10,24 @@ A combat overlay, trigger/alert system, and countdown timers for EverQuest 2, bu
 EQ2 doesn't have anything like [Cactbot](https://github.com/quisquous/cactbot) or
 [OverlayPlugin](https://github.com/OverlayPlugin/OverlayPlugin) - the trigger, timer, and
 DPS-meter overlays that FFXIV players take for granted. Skill Issue Toolkit brings that
-same idea to EQ2: a real-time DPS meter, regex-based trigger alerts, and countdown timer
-bars, all rendered as transparent always-on-top windows over the game instead of a
-separate browser tab, spreadsheet or Windows 95 looking window.
+same idea to EQ2: a real-time DPS meter, regex-based notification alerts, and countdown
+timer bars driven by ACT's own native Spell Timers, all rendered as transparent
+always-on-top windows over the game instead of a separate browser tab, spreadsheet or
+Windows 95 looking window.
 
 ## What it does
 
 - **DPS meter** - per-encounter damage, DPS, healing, HPS, power fed/drained, max hit,
   cures, and deaths for every ally in the fight, with automatic class icons.
-- **Trigger alerts** - regex-matched log-line alerts in three severity tiers (Alarm,
-  Alert, Info), with built-in triggers that auto-update from this repo so you always have
-  the latest set without redistributing files, plus your own custom triggers on top.
-- **Timer bars** - countdown bars for recurring abilities, driven by the same trigger
-  rules, with automatic stacking when multiple instances are active at once.
+- **Notifications** - regex-matched log-line alerts in three severity tiers (Alarm,
+  Alert, Info), with a built-in rule set that auto-updates from this repo so you always
+  have the latest set without redistributing files, plus your own custom rules on top.
+- **Timer bars** - countdown bars for recurring abilities, sourced directly from ACT's own
+  native Spell Timers, with automatic stacking when multiple instances are active at once.
 
-| Trigger alerts | Timer bars |
+| Notifications | Timer bars |
 |---|---|
-| ![Triggers](.github/triggers.png) | ![Timers](.github/timers.png) |
+| ![Notifications](.github/triggers.png) | ![Timers](.github/timers.png) |
 
 | DPS meter | Settings |
 |---|---|
@@ -68,10 +69,11 @@ plugin:
 - **Zoom** to resize an overlay's content.
 - **Hide when EQ2 loses focus** to auto-hide on alt-tab.
 
-Trigger rules can be reviewed and individually disabled from the same settings tab, and
-your own custom triggers live in a plain JSON file you can edit directly. See
-[`ActPlugin/README.md`](ActPlugin/README.md) for full details on triggers, timers, and
-class-icon lookup.
+Notification rules can be reviewed and individually disabled from the same settings tab,
+and your own custom rules live in a plain JSON file you can edit directly. Timer bars need
+no configuration here at all - they mirror whatever's set up in ACT's own Spell Timers
+panel. See [`ActPlugin/README.md`](ActPlugin/README.md) for full details on notifications,
+timers, and class-icon lookup.
 
 ## Building from source
 
