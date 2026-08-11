@@ -9,7 +9,7 @@
     <Nullable>disable</Nullable>
     <AssemblyName>SkillIssueToolkit.ActPlugin</AssemblyName>
     <RootNamespace>SkillIssueToolkit.ActPlugin</RootNamespace>
-    <Version>1.0.0-beta.2</Version>
+    <Version>1.0.0-beta.3</Version>
   </PropertyGroup>
 
   <ItemGroup>
@@ -26,6 +26,7 @@
 
   <ItemGroup>
     <None Include="Overlays\**" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="eq2overlay-class-abilities.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

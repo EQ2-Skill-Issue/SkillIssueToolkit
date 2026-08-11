@@ -6,9 +6,9 @@
     "Severity": "Alarm"
   },
   {
-    "Name": "GroupMemberDown",
-    "Pattern": "has been defeated",
-    "DisplayText": "Someone in your group went down!",
+    "Name": "NearbyPlayerDown",
+    "Pattern": "has (?:killed|slain) (?<who>[A-Za-z][\\w']*(?: [A-Za-z][\\w']*)?)\\.$",
+    "DisplayText": "{who} went down!",
     "Severity": "Alert"
   },
   {
@@ -26,8 +26,8 @@
   },
   {
     "Name": "ExampleSuppressCooldown",
-    "Pattern": "has been defeated",
-    "DisplayText": "Group member down (won't repeat for 30s even if this matches again in that window)",
+    "Pattern": "has (?:killed|slain) (?<who>[A-Za-z][\\w']*(?: [A-Za-z][\\w']*)?)\\.$",
+    "DisplayText": "{who} went down (won't repeat for 30s even if this matches again in that window)",
     "Severity": "Alert",
     "SuppressSeconds": 30
   },

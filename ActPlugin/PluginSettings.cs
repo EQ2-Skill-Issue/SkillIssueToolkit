@@ -12,6 +12,14 @@ namespace SkillIssueToolkit.ActPlugin
         // policy prohibits sharing a registered service ID.
         public string CensusServiceId { get; set; } = "example";
 
+        // When true, the DPS meter keeps refreshing from a periodic timer even if you
+        // personally haven't acted recently - previously the only thing that ever rebuilt and
+        // broadcast a snapshot was your own AfterCombatAction, so being idle (buffed, dead,
+        // out of range, etc.) meant the overlay just froze even though your group/raid was
+        // still fighting. Defaults on since most people want to see ongoing combat around
+        // them regardless of what they personally are doing.
+        public bool BroadcastWhileIdle { get; set; } = true;
+
         public static PluginSettings Load(string pluginDir)
         {
             var path = Path.Combine(pluginDir, "eq2overlay-settings.json");

@@ -16,7 +16,6 @@ namespace SkillIssueToolkit.ActPlugin
         private string _logFilePath;
         private bool _hasDumpedTags;
         private EncounterData _lastEncounter;
-        private string _currentEnemyName;
 
         // Zonewide totals persist across encounter resets, clearing only on a zone change.
         // _encounterContributed tracks what's already been folded into _zonewideTotals per
@@ -32,6 +31,16 @@ namespace SkillIssueToolkit.ActPlugin
         // here is lossless - whatever was missed just gets folded in on the next processed tick.
         private const int MinBroadcastIntervalMs = 200;
         private DateTime _lastBroadcastAt = DateTime.MinValue;
+
+        // Drives snapshot broadcasts on a fixed cadence so the DPS overlay keeps updating
+        // even while you personally aren't acting (see PluginSettings.BroadcastWhileIdle) -
+        // AfterCombatAction alone only fires off your own attacker/victim actions, so being
+        // idle, dead, or simply out of range of the current fight froze the overlay even
+        // though your group/raid was still going. Interval intentionally coarser than
+        // MinBroadcastIntervalMs since this is just a "don't go stale" fallback, not the
+        // primary update path during your own active combat.
+        private const int IdleBroadcastIntervalMs = 1500;
+        private System.Threading.Timer _idleBroadcastTimer;
         private readonly Dictionary<string, RunningTotals> _zonewideTotals = new Dictionary<string, RunningTotals>();
         private readonly Dictionary<string, RunningTotals> _encounterContributed = new Dictionary<string, RunningTotals>();
 
@@ -47,6 +56,8 @@ namespace SkillIssueToolkit.ActPlugin
         }
         private PluginSettings _settings;
         private CensusClassLookup _censusLookup;
+        private ClassAbilityLookup _classAbilityLookup;
+        private readonly Dictionary<string, string> _lastAbilityNameByCombatant = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         private bool _hasLoggedGroupDiagnostic;
         private NotificationEngine _notificationEngine;
         private NotificationSettings _notificationSettings;
@@ -80,6 +91,7 @@ namespace SkillIssueToolkit.ActPlugin
 
             _settings = PluginSettings.Load(pluginDir);
             _notificationSettings = NotificationSettings.Load(pluginDir);
+            _classAbilityLookup = new ClassAbilityLookup(pluginDir, Log);
             BuildSettingsUi(pluginScreenSpace, pluginDir);
 
             StartServer(_settings.Port);
@@ -93,6 +105,7 @@ namespace SkillIssueToolkit.ActPlugin
 
             ActGlobals.oFormActMain.AfterCombatAction += OnAfterCombatAction;
             ActGlobals.oFormActMain.OnCombatEnd += OnCombatEnd;
+            _idleBroadcastTimer = new System.Threading.Timer(OnIdleBroadcastTick, null, IdleBroadcastIntervalMs, IdleBroadcastIntervalMs);
 
             var world = CensusClassLookup.DetectWorldFromLogPath(ActGlobals.oFormActMain.LogFilePath);
             _censusLookup = new CensusClassLookup(_settings.CensusServiceId, world, Log);
@@ -386,6 +399,21 @@ namespace SkillIssueToolkit.ActPlugin
                 ForeColor = System.Drawing.Color.Gray
             };
             tab.Controls.Add(censusHintLabel);
+            y += lineHeight + 10;
+
+            var broadcastWhileIdleCheckbox = new CheckBox
+            {
+                Text = "Keep DPS meter updating while idle (shows combat around you even if you aren't acting)",
+                Checked = _settings.BroadcastWhileIdle,
+                Location = new System.Drawing.Point(10, y),
+                AutoSize = true
+            };
+            broadcastWhileIdleCheckbox.CheckedChanged += (s, e) =>
+            {
+                _settings.BroadcastWhileIdle = broadcastWhileIdleCheckbox.Checked;
+                _settings.Save(pluginDir);
+            };
+            tab.Controls.Add(broadcastWhileIdleCheckbox);
             y += lineHeight + 10;
 
             _urlLabel = new Label { Text = "Current: (starting...)", Location = new System.Drawing.Point(10, y), AutoSize = true };
@@ -826,6 +854,7 @@ namespace SkillIssueToolkit.ActPlugin
         {
             ActGlobals.oFormActMain.AfterCombatAction -= OnAfterCombatAction;
             ActGlobals.oFormActMain.OnCombatEnd -= OnCombatEnd;
+            _idleBroadcastTimer?.Dispose();
             _notificationEngine?.Unsubscribe();
             _alarmTimerBridge?.Unsubscribe();
             _logLineCapture?.Unsubscribe();
@@ -851,10 +880,17 @@ namespace SkillIssueToolkit.ActPlugin
         {
             try
             {
-                var encounter = ActGlobals.oFormActMain.ActiveZone?.ActiveEncounter;
-                if (encounter == null)
+                // Recorded before the ActiveEncounter check below and regardless of the
+                // broadcast throttle further down - AfterCombatAction can fire for a heal/buff
+                // cast before ACT has an ActiveEncounter yet (e.g. casting a buff like Amends
+                // on yourself while out of combat), and a class match only needs the most
+                // recent ability name for this attacker. Capturing it here means a
+                // class-unique ability cast before the pull still resolves the class once
+                // combat actually starts, instead of being lost because there was no active
+                // encounter yet when it happened.
+                if (!string.IsNullOrEmpty(actionInfo.attacker) && !string.IsNullOrEmpty(actionInfo.theAttackType))
                 {
-                    return;
+                    _lastAbilityNameByCombatant[actionInfo.attacker] = actionInfo.theAttackType;
                 }
 
                 // Throttle: rebuilding/serializing/broadcasting a full snapshot on every raid
@@ -866,8 +902,55 @@ namespace SkillIssueToolkit.ActPlugin
                 {
                     return;
                 }
-                _lastBroadcastAt = now;
 
+                BuildAndBroadcastSnapshot(actionInfo.attacker, actionInfo.victim);
+            }
+            catch (Exception ex)
+            {
+                // Never let a broadcast failure take down ACT's combat parsing thread.
+                Log("EXCEPTION: " + ex);
+                ActGlobals.oFormActMain.WriteDebugLog("SkillIssueToolkit.ActPlugin error: " + ex);
+            }
+        }
+
+        // Fallback tick for when BroadcastWhileIdle is enabled - keeps the DPS overlay from
+        // going stale while you aren't personally attacking or being attacked, as long as
+        // there's still an active encounter for someone else in view to be fighting in.
+        // Never throttled against MinBroadcastIntervalMs/_lastBroadcastAt itself since the
+        // timer's own IdleBroadcastIntervalMs period already provides that spacing, but it
+        // does update _lastBroadcastAt so a real combat action right after a tick doesn't
+        // immediately double up.
+        private void OnIdleBroadcastTick(object state)
+        {
+            try
+            {
+                if (_settings?.BroadcastWhileIdle != true) return;
+                if (ActGlobals.oFormActMain.ActiveZone?.ActiveEncounter == null) return;
+
+                BuildAndBroadcastSnapshot(null, null);
+            }
+            catch (Exception ex)
+            {
+                Log("EXCEPTION in idle broadcast tick: " + ex);
+            }
+        }
+
+        // Shared by both the live AfterCombatAction path and the idle-timer fallback.
+        // attacker/victim are only available from an actual CombatActionEventArgs and are
+        // used solely to refine which mob is currently displayed as the encounter name - both
+        // are null on an idle-timer tick, which just falls back to encounter.Title instead.
+        private void BuildAndBroadcastSnapshot(string attacker, string victim)
+        {
+            var encounter = ActGlobals.oFormActMain.ActiveZone?.ActiveEncounter;
+            if (encounter == null)
+            {
+                return;
+            }
+
+            _lastBroadcastAt = DateTime.Now;
+
+            try
+            {
                 if (!_hasLoggedGroupDiagnostic)
                 {
                     _hasLoggedGroupDiagnostic = true;
@@ -883,27 +966,15 @@ namespace SkillIssueToolkit.ActPlugin
 
                 // ACT's encounter.Title is only reliable for a single isolated mob - fighting
                 // several mobs back-to-back within one encounter-timeout window rolls them all
-                // into one EncounterData wrapper titled generically "Encounter".
-                // CombatActionEventArgs gives the actual attacker/victim of this action, so the
-                // real current target is tracked directly - reset only when the EncounterData
-                // object itself changes (a new engagement), not per sub-mob within one.
-                if (!ReferenceEquals(encounter, _lastEncounter))
-                {
-                    _lastEncounter = encounter;
-                    _currentEnemyName = null;
-                }
-
-                var allyNames = new HashSet<string>(allyData.Select(a => a.Name), StringComparer.OrdinalIgnoreCase);
-                if (!string.IsNullOrEmpty(actionInfo.victim) && !allyNames.Contains(actionInfo.victim))
-                {
-                    _currentEnemyName = actionInfo.victim;
-                }
-                else if (!string.IsNullOrEmpty(actionInfo.attacker) && !allyNames.Contains(actionInfo.attacker))
-                {
-                    _currentEnemyName = actionInfo.attacker;
-                }
-
-                var encounterDisplayName = _currentEnemyName ?? encounter.Title;
+                // into one EncounterData wrapper titled generically "Encounter". Previously this
+                // was tracked by remembering just the most recent action's attacker/victim, but
+                // that flip-flopped every time actions alternated between two live mobs (adds,
+                // AoE, etc.), making the header name flash back and forth. GetStrongestEnemy
+                // ranks non-ally combatants by damage taken (see ACT's own EncounterData source),
+                // which is stable across individual actions - it only changes once a different
+                // mob has actually taken more damage overall, not on every single swing.
+                var strongestEnemy = encounter.GetStrongestEnemy(ActGlobals.charName);
+                var encounterDisplayName = !string.IsNullOrEmpty(strongestEnemy) ? strongestEnemy : encounter.Title;
 
                 // One-time check on whether CombatantData.Tags (a generic bag) holds
                 // class/archetype info anywhere - dumps it once per session to inspect real
@@ -943,6 +1014,7 @@ namespace SkillIssueToolkit.ActPlugin
                 if (!ReferenceEquals(encounter, _lastEncounter))
                 {
                     _encounterContributed.Clear();
+                    _lastEncounter = encounter;
                 }
 
                 foreach (var c in allyData)
@@ -1075,8 +1147,17 @@ namespace SkillIssueToolkit.ActPlugin
         // kicks off an async lookup if it hasn't been asked about this name yet - the result
         // (if any) shows up on a later broadcast once that resolves, not this one, since this
         // must never block the combat processing thread waiting on a network call.
+        //
+        // Checked first: a class-specific ability name already seen from this combatant (see
+        // ClassAbilityLookup) - instant, offline, and doesn't cost a Census request or get
+        // blocked by a character opted out of Census. Falls back to Census only if no
+        // class-unique ability has been observed for this combatant yet.
         private string ResolveClass(string characterName)
         {
+            var fromAbility = _classAbilityLookup?.TryGetClass(
+                _lastAbilityNameByCombatant.TryGetValue(characterName, out var abilityName) ? abilityName : null);
+            if (!string.IsNullOrEmpty(fromAbility)) return fromAbility;
+
             var fromCensus = _censusLookup?.TryGetCachedClass(characterName);
             if (!string.IsNullOrEmpty(fromCensus)) return fromCensus;
 

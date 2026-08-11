@@ -56,6 +56,11 @@ Copy-Item (Join-Path $actPluginOut "Newtonsoft.Json.dll") $distOut
 Copy-Item (Join-Path $actPluginDir "eq2overlay-notifications.default.json") $distOut
 Copy-Item (Join-Path $actPluginDir "eq2overlay-notifications.custom.json") $distOut
 
+# Class-specific ability -> class name lookup, used as a local/offline fallback for class
+# resolution alongside Census (see ClassAbilityLookup.cs). Static data, not compiled - just
+# needs to travel alongside the plugin DLL like the notification rule files above.
+Copy-Item (Join-Path $actPluginDir "eq2overlay-class-abilities.json") $distOut
+
 # Deliberately NOT copying eq2overlay-settings.json here. It's tempting (it'd carry a
 # pre-configured Census Service ID into what you distribute, saving guildmates a setup
 # step), but Daybreak's own API policy explicitly says "please don't share your service ID
