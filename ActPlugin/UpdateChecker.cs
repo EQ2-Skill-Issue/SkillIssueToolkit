@@ -87,7 +87,7 @@ namespace SkillIssueToolkit.ActPlugin
                 }
 
                 GitHubRelease release = null;
-                Version releaseVersion = null;
+                SemVer releaseVersion = null;
                 foreach (var candidate in releases)
                 {
                     if (candidate.Draft || string.IsNullOrWhiteSpace(candidate.TagName))
@@ -95,12 +95,12 @@ namespace SkillIssueToolkit.ActPlugin
                         continue;
                     }
 
-                    if (!TryParseCoreVersion(candidate.TagName.TrimStart('v', 'V'), out var candidateVersion))
+                    if (!SemVer.TryParse(candidate.TagName.TrimStart('v', 'V'), out var candidateVersion))
                     {
                         continue;
                     }
 
-                    if (release == null || candidateVersion > releaseVersion)
+                    if (release == null || candidateVersion.CompareTo(releaseVersion) > 0)
                     {
                         release = candidate;
                         releaseVersion = candidateVersion;
@@ -116,13 +116,13 @@ namespace SkillIssueToolkit.ActPlugin
                 var latestVersion = releaseVersion;
 
                 var currentVersionText = GetCurrentVersion();
-                if (!TryParseCoreVersion(currentVersionText, out var currentVersion))
+                if (!SemVer.TryParse(currentVersionText, out var currentVersion))
                 {
                     log?.Invoke("UpdateChecker: could not parse current version '" + currentVersionText + "' - skipping");
                     return null;
                 }
 
-                if (latestVersion <= currentVersion)
+                if (latestVersion.CompareTo(currentVersion) <= 0)
                 {
                     log?.Invoke("UpdateChecker: running latest version (" + currentVersionText + ")");
                     return null;
@@ -138,16 +138,92 @@ namespace SkillIssueToolkit.ActPlugin
             }
         }
 
-        // System.Version has no concept of SemVer pre-release suffixes (e.g. "-beta.1"), so
-        // strip everything from the first '-' onward before parsing. Fine for comparison
-        // purposes here since pre-release/draft releases are already filtered out above -
-        // this only ever needs to compare stable X.Y.Z tags against the current version's
-        // core X.Y.Z, even while the current build is itself still a beta.
-        private static bool TryParseCoreVersion(string versionText, out Version version)
+        // Minimal SemVer 2.0 comparer - just enough for this repo's own X.Y.Z-beta.N tags.
+        // System.Version can't represent a prerelease suffix at all, which is why the previous
+        // version of this check stripped "-beta.N" entirely before comparing: that made every
+        // beta of the same X.Y.Z core compare as equal, so "1.0.0-beta.3" (current) vs
+        // "1.0.0-beta.4" (latest on GitHub) were never actually recognized as different
+        // versions. Build metadata (a "+..." suffix, e.g. from the current assembly's git
+        // commit hash) is parsed but explicitly ignored in comparisons per the SemVer spec -
+        // it never affects precedence.
+        private sealed class SemVer : IComparable<SemVer>
         {
-            var dashIndex = versionText.IndexOf('-');
-            var coreVersionText = dashIndex >= 0 ? versionText.Substring(0, dashIndex) : versionText;
-            return Version.TryParse(coreVersionText, out version);
+            private readonly Version _core;
+            private readonly string[] _prerelease; // empty array = no prerelease (a full release)
+
+            private SemVer(Version core, string[] prerelease)
+            {
+                _core = core;
+                _prerelease = prerelease;
+            }
+
+            public static bool TryParse(string versionText, out SemVer version)
+            {
+                version = null;
+                if (string.IsNullOrWhiteSpace(versionText)) return false;
+
+                // Strip build metadata ("+...") first - it has no bearing on precedence at all.
+                var plusIndex = versionText.IndexOf('+');
+                var withoutMetadata = plusIndex >= 0 ? versionText.Substring(0, plusIndex) : versionText;
+
+                var dashIndex = withoutMetadata.IndexOf('-');
+                var coreText = dashIndex >= 0 ? withoutMetadata.Substring(0, dashIndex) : withoutMetadata;
+                var prereleaseText = dashIndex >= 0 ? withoutMetadata.Substring(dashIndex + 1) : null;
+
+                if (!Version.TryParse(coreText, out var core)) return false;
+
+                var prerelease = string.IsNullOrEmpty(prereleaseText)
+                    ? Array.Empty<string>()
+                    : prereleaseText.Split('.');
+
+                version = new SemVer(core, prerelease);
+                return true;
+            }
+
+            public int CompareTo(SemVer other)
+            {
+                var coreCompare = _core.CompareTo(other._core);
+                if (coreCompare != 0) return coreCompare;
+
+                // Per SemVer: a version with no prerelease outranks one with a prerelease of
+                // the same core (e.g. "1.0.0" > "1.0.0-beta.4").
+                if (_prerelease.Length == 0 && other._prerelease.Length == 0) return 0;
+                if (_prerelease.Length == 0) return 1;
+                if (other._prerelease.Length == 0) return -1;
+
+                var count = Math.Max(_prerelease.Length, other._prerelease.Length);
+                for (var i = 0; i < count; i++)
+                {
+                    if (i >= _prerelease.Length) return -1; // fewer identifiers = lower precedence
+                    if (i >= other._prerelease.Length) return 1;
+
+                    var a = _prerelease[i];
+                    var b = other._prerelease[i];
+
+                    var aIsNumeric = int.TryParse(a, out var aNum);
+                    var bIsNumeric = int.TryParse(b, out var bNum);
+
+                    int identifierCompare;
+                    if (aIsNumeric && bIsNumeric)
+                    {
+                        identifierCompare = aNum.CompareTo(bNum);
+                    }
+                    else if (aIsNumeric != bIsNumeric)
+                    {
+                        // Numeric identifiers always have lower precedence than alphanumeric ones.
+                        identifierCompare = aIsNumeric ? -1 : 1;
+                    }
+                    else
+                    {
+                        identifierCompare = string.CompareOrdinal(a, b);
+                    }
+
+                    if (identifierCompare != 0) return identifierCompare;
+                }
+
+                return 0;
+            }
         }
     }
 }
+
